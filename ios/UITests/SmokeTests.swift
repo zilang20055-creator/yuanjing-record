@@ -8,10 +8,15 @@ final class SmokeTests: XCTestCase {
         XCTAssertTrue(app.buttons["new-entry"].waitForExistence(timeout: 20))
         app.buttons["new-entry"].tap()
         app.buttons["category-食物"].tap()
-        let tag = app.textFields["添加小标签"]
-        XCTAssertTrue(tag.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["本次只记大类"].waitForExistence(timeout: 5))
+        app.buttons["本次只记大类"].tap()
+        let tag = app.textFields["entry-tag"]
         tag.tap(); tag.typeText("测试餐厅")
-        app.buttons["选择"].tap()
+        app.buttons["标签填好了，输入金额"].tap()
+        XCTAssertFalse(app.textFields["备注（可选）"].exists)
+        app.buttons["choose-tag"].tap()
+        XCTAssertTrue(app.textFields["添加小标签"].waitForExistence(timeout: 5))
+        app.buttons["关闭标签选择"].tap()
         for digit in ["1", ".", "2", "3"] { app.buttons["key-" + digit].tap() }
         app.buttons["key-完成"].tap()
         XCTAssertTrue(app.staticTexts["测试餐厅"].waitForExistence(timeout: 5))

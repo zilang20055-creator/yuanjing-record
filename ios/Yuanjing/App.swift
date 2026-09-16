@@ -1,6 +1,16 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+struct GentleButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.75 : 1)
+            .onChange(of: configuration.isPressed) { _, pressed in
+                if pressed { UIImpactFeedbackGenerator(style: .light).impactOccurred(intensity: 0.65) }
+            }
+    }
+}
+
 let ink = Color(red: 0.20, green: 0.16, blue: 0.12)
 let cream = Color(red: 1, green: 0.98, blue: 0.94)
 let honey = Color(red: 0.96, green: 0.78, blue: 0.41)
@@ -34,7 +44,7 @@ struct CatIcon: View {
 }
 @main struct YuanjingApp: App {
     @StateObject private var store = Store()
-    var body: some Scene { WindowGroup { RootView().environmentObject(store).tint(ink).preferredColorScheme(.light) } }
+    var body: some Scene { WindowGroup { RootView().environmentObject(store).buttonStyle(GentleButtonStyle()).tint(ink).preferredColorScheme(.light) } }
 }
 struct RootView: View {
     @EnvironmentObject var store: Store
@@ -71,18 +81,18 @@ struct HomeView: View {
                         VStack(alignment: .leading, spacing: 8) { Text("剩余总金额").font(.subheadline); Text("¥ " + Ledger.money(store.state.accounts.reduce(0) { $0 + $1.balance })).font(.system(size: 32, weight: .bold, design: .rounded)); Text("账户与余额  ›").font(.caption) }
                         Spacer(minLength: 0); CatIcon(index: 23, size: 90)
                     }.card(honey.opacity(0.4))
-                }.buttonStyle(.plain)
+                }.buttonStyle(GentleButtonStyle())
                 VStack(alignment: .leading, spacing: 8) {
                     let start = Ledger.cycleStart(Date(), payday: store.state.payday)
                     Text("本月花费 · \(start.formatted(.dateTime.month().day())) 起").font(.subheadline)
                     Text("¥ " + Ledger.money(Ledger.spend(store.state.entries, from: start, until: Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: Date()))!))).font(.title.bold())
                     Text(Ledger.comparison(store.state.entries, now: Date(), payday: store.state.payday, coverageStart: store.state.trackingStartedAt)).font(.caption).foregroundStyle(.secondary)
                 }.frame(maxWidth: .infinity, alignment: .leading).card()
-                Button { newEntry = true } label: { HStack { Image(systemName: "plus"); Text("记一笔").bold() }.frame(maxWidth: .infinity).card(honey) }.buttonStyle(.plain).accessibilityIdentifier("new-entry")
+                Button { newEntry = true } label: { HStack { Image(systemName: "plus"); Text("记一笔").bold() }.frame(maxWidth: .infinity).card(honey) }.buttonStyle(GentleButtonStyle()).accessibilityIdentifier("new-entry")
                 HStack { Text("最近记录").font(.title3.bold()); Spacer(); NavigationLink("分类统计") { StatisticsView() }.font(.subheadline) }
                 if store.state.entries.isEmpty { Text("先在「账户与余额」填好各项余额，\n再记下今天的第一笔吧。").foregroundStyle(.secondary).padding(.vertical, 24) }
                 ForEach(store.state.entries.sorted { $0.date > $1.date }) { entry in
-                    NavigationLink { EntryDetail(entry: entry) } label: { EntryRow(entry: entry) }.buttonStyle(.plain)
+                    NavigationLink { EntryDetail(entry: entry) } label: { EntryRow(entry: entry) }.buttonStyle(GentleButtonStyle())
                 }
             }.padding(20)
         }.background(cream).toolbar(.hidden, for: .navigationBar).foregroundStyle(ink)
@@ -110,7 +120,7 @@ struct EntryForm: View {
     @State private var account: UUID? = nil
     @State private var destination: UUID? = nil
     @State private var date = Date()
-    @State private var note = ""
+    @FocusState private var tagFocused: Bool
     @State private var tagsShown = false
     @State private var newTag = ""
     @State private var tagsSnapshot: [String] = []
@@ -124,11 +134,11 @@ struct EntryForm: View {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 5), count: 5), spacing: 10) {
                         ForEach(Array(store.state.categories.enumerated()), id: \.element) { index, item in
                             Button {
-                                category = item; tag = ""; tagsSnapshot = store.sortedTags(item); tagsShown = true
+                                tagFocused = false; category = item; tag = ""; tagsSnapshot = store.sortedTags(item); tagsShown = true
                             } label: {
                                 VStack(spacing: 3) { CatIcon(index: categoryArt.firstIndex(of: item) ?? 18, size: 38); Text(item).font(.system(size: 12, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.7) }
                                     .frame(maxWidth: .infinity).padding(.vertical, 7).background(category == item ? honey.opacity(0.55) : .clear, in: RoundedRectangle(cornerRadius: 16))
-                            }.buttonStyle(.plain).accessibilityIdentifier("category-" + item)
+                            }.buttonStyle(GentleButtonStyle()).accessibilityIdentifier("category-" + item)
                         }
                     }
                 }.frame(maxHeight: .infinity)
@@ -138,17 +148,31 @@ struct EntryForm: View {
                 if kind == "转账" { Image(systemName: "arrow.right"); Picker("转入", selection: $destination) { Text("转入账户").tag(nil as UUID?); ForEach(store.state.accounts) { Text($0.name).tag(Optional($0.id)) } }.labelsHidden() }
                 Spacer(minLength: 0)
                 DatePicker("日期", selection: $date, displayedComponents: [.date, .hourAndMinute]).labelsHidden().scaleEffect(0.85, anchor: .trailing)
+                if kind != "转账" && parent == nil {
+                    Button { tagFocused = false; tagsSnapshot = store.sortedTags(category); tagsShown = true } label: {
+                        Image(systemName: "tag").font(.body).frame(width: 44, height: 44)
+                    }.accessibilityLabel("选择标签").accessibilityIdentifier("choose-tag")
+                }
             }.font(.caption)
-            TextField("备注（可选）", text: $note).textFieldStyle(.roundedBorder)
             HStack {
-                Button { tagsSnapshot = store.sortedTags(category); tagsShown = true } label: { Text(tag.isEmpty ? category + " · 标签" : category + " · " + tag).font(.subheadline) }.disabled(kind == "转账" || parent != nil)
+                if kind != "转账" && parent == nil {
+                    TextField("填写标签", text: $tag)
+                        .focused($tagFocused).submitLabel(.done)
+                        .onSubmit { tagFocused = false }
+                        .accessibilityIdentifier("entry-tag")
+                } else { Text(kind == "转账" ? "转账" : tag.isEmpty ? category : tag).font(.subheadline) }
                 Spacer(); Text("¥ " + (amount.isEmpty ? "0" : amount)).font(.system(size: 29, weight: .bold, design: .rounded)).lineLimit(1).minimumScaleFactor(0.5)
             }.card(honey.opacity(0.22))
             if let operand, let operation { Text("\(Ledger.money(operand)) \(operation)").font(.caption).frame(maxWidth: .infinity, alignment: .trailing) }
+            if !tagFocused {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
                 ForEach(["7", "8", "9", "⌫", "4", "5", "6", "+", "1", "2", "3", "−", ".", "0", "=", "完成"], id: \.self) { key in
-                    Button { press(key) } label: { Text(key).font(.system(size: key == "完成" ? 19 : 26, weight: .semibold, design: .rounded)).frame(maxWidth: .infinity).frame(height: 47).background(key == "完成" ? honey : .white, in: RoundedRectangle(cornerRadius: 17)).overlay(RoundedRectangle(cornerRadius: 17).stroke(ink, lineWidth: 2)) }.buttonStyle(.plain).accessibilityIdentifier("key-" + key)
+                    Button { press(key) } label: { Text(key).font(.system(size: key == "完成" ? 19 : 26, weight: .semibold, design: .rounded)).frame(maxWidth: .infinity).frame(height: 47).background(key == "完成" ? honey : .white, in: RoundedRectangle(cornerRadius: 17)).overlay(RoundedRectangle(cornerRadius: 17).stroke(ink, lineWidth: 2)) }.buttonStyle(GentleButtonStyle()).accessibilityIdentifier("key-" + key)
                 }
+            }
+            } else {
+                Button("标签填好了，输入金额") { tagFocused = false }
+                    .frame(maxWidth: .infinity).padding(12).background(honey, in: Capsule())
             }
         }.padding(16).background(cream).foregroundStyle(ink).navigationTitle(parent == nil ? "记一笔" : kind).navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } } }
@@ -160,7 +184,8 @@ struct EntryForm: View {
                         ScrollView { LazyVGrid(columns: [GridItem(.adaptive(minimum: 85))], spacing: 10) { ForEach(tagsSnapshot, id: \.self) { item in Button { tag = item; tagsShown = false } label: { Text(item).font(.subheadline).frame(maxWidth: .infinity).padding(12).background(honey.opacity(0.35), in: Capsule()) } } } }
                         Button("本次只记大类") { tag = ""; tagsShown = false }
                     }.padding().background(cream).navigationTitle(category + " · 全部标签").navigationBarTitleDisplayMode(.inline)
-                }.presentationDetents([.height(320), .medium])
+                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("关闭") { tagsShown = false }.accessibilityLabel("关闭标签选择") } }
+                }.buttonStyle(GentleButtonStyle()).presentationDetents([.height(320), .medium])
             }
     }
     private func evaluated() -> Int64? {
@@ -177,7 +202,7 @@ struct EntryForm: View {
         }
         if key == "完成" {
             guard let value = evaluated(), value > 0, let account else { store.error = "请输入大于 0 的金额"; return }
-            if store.add(Entry(date: date, kind: kind, amount: value, account: account, destination: destination, category: category, tag: tag, note: note, parent: parent?.id)) { dismiss() }; return
+            if store.add(Entry(date: date, kind: kind, amount: value, account: account, destination: destination, category: category, tag: tag.trimmingCharacters(in: .whitespacesAndNewlines), note: "", parent: parent?.id)) { dismiss() }; return
         }
         if key == "." { if !amount.contains(".") { amount = amount.isEmpty ? "0." : amount + "." }; return }
         if let decimal = amount.firstIndex(of: "."), amount.distance(from: decimal, to: amount.endIndex) > 2 { return }
@@ -435,7 +460,6 @@ struct EntryEditor: View {
     @State private var destination: UUID? = nil
     @State private var category = ""
     @State private var tag = ""
-    @State private var note = ""
     @State private var error: String? = nil
     var body: some View {
         NavigationStack { Form {
@@ -448,7 +472,6 @@ struct EntryEditor: View {
                 Picker("大类", selection: $category) { ForEach(store.state.categories, id: \.self) { Text($0) } }
                 TextField("小标签", text: $tag)
             }
-            TextField("备注", text: $note, axis: .vertical)
             Text("历史导入记录只修正统计，不改变余额。已经校准过余额的账户，校准前的记录修改也不会再次扣款。").font(.caption)
             if let error { Text(error).foregroundStyle(.red) }
         }.navigationTitle("编辑记录").toolbar {
@@ -457,11 +480,11 @@ struct EntryEditor: View {
                 guard let number = Ledger.cents(amount), number > 0, let account else { error = "请填写有效金额和账户"; return }
                 var edited = entry
                 edited.amount = number; edited.date = date; edited.account = account; edited.destination = destination
-                edited.category = category; edited.tag = tag; edited.note = note
+                edited.category = category; edited.tag = tag.trimmingCharacters(in: .whitespacesAndNewlines)
                 var preview = store.state
                 do { try Ledger.replace(edited, in: &preview) } catch { self.error = error.localizedDescription; return }
                 if store.change({ try Ledger.replace(edited, in: &$0) }) { dismiss() }
             } }
-        }.onAppear { amount = Ledger.money(entry.amount); date = entry.date; account = entry.account; destination = entry.destination; category = entry.category; tag = entry.tag; note = entry.note } }
+        }.onAppear { amount = Ledger.money(entry.amount); date = entry.date; account = entry.account; destination = entry.destination; category = entry.category; tag = entry.tag } }
     }
 }
