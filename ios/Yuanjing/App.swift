@@ -57,6 +57,7 @@ struct RootView: View {
             NavigationStack {
                 VStack(spacing: 22) { CatIcon(index: 22, size: 150); Text("睡个好觉").font(.title.bold()); Text("睡眠记录稍后见").foregroundStyle(.secondary) }.frame(maxWidth: .infinity, maxHeight: .infinity).background(cream)
             }.tabItem { Label("睡眠", systemImage: "moon") }.tag(2)
+            NavigationStack { SettingsView() }.tabItem { Label("设置", systemImage: "gearshape") }.tag(3)
         }
         .onChange(of: tab) { _, _ in
             UIImpactFeedbackGenerator(style: .light).impactOccurred(intensity: 0.65)
@@ -77,8 +78,8 @@ struct HomeView: View {
     @Binding var newEntry: Bool
     var body: some View {
         List {
-            VStack(alignment: .leading, spacing: 18) {
-                HStack { Text("圆景记录").font(.largeTitle.bold()); Spacer(); NavigationLink { SettingsView() } label: { Image(systemName: "gearshape").font(.title2) }.accessibilityLabel("设置") }
+            Section {
+                Text("圆景记录").font(.largeTitle.bold())
                 NavigationLink { AccountsView() } label: {
                     HStack {
                         VStack(alignment: .leading, spacing: 8) { Text("剩余总金额").font(.subheadline); Text("¥ " + Ledger.money(store.state.accounts.reduce(0) { $0 + $1.balance })).font(.system(size: 32, weight: .bold, design: .rounded)); Text("账户与余额  ›").font(.caption) }
@@ -92,6 +93,11 @@ struct HomeView: View {
                     Text(Ledger.comparison(store.state.entries, now: Date(), payday: store.state.payday, coverageStart: store.state.trackingStartedAt)).font(.caption).foregroundStyle(.secondary)
                 }.frame(maxWidth: .infinity, alignment: .leading).card()
                 Button { newEntry = true } label: { HStack { Image(systemName: "plus"); Text("记一笔").bold() }.frame(maxWidth: .infinity).card(honey) }.buttonStyle(GentleButtonStyle()).accessibilityIdentifier("new-entry")
+                let pendingCount = Recurring.pending(store.state).count
+                if pendingCount > 0 {
+                    NavigationLink { RecurringList() } label: { Label("固定收支 · \(pendingCount) 项待确认", systemImage: "repeat") }
+                        .accessibilityIdentifier("pending-recurring")
+                }
                 HStack { Text("最近记录").font(.title3.bold()); Spacer(); NavigationLink("分类统计") { StatisticsView() }.font(.subheadline) }
                 if store.state.entries.isEmpty { Text("先在「账户与余额」填好各项余额，\n再记下今天的第一笔吧。").foregroundStyle(.secondary).padding(.vertical, 24) }
             }.listRowSeparator(.hidden).listRowBackground(cream)
@@ -394,28 +400,98 @@ struct BackupDocument: FileDocument {
 }
 struct SettingsView: View {
     @EnvironmentObject var store: Store
+    var body: some View {
+        List {
+            HStack {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("把日常安排好").font(.title2.bold())
+                    Text("\(store.state.entries.count) 笔账单 · \(store.state.bowels.count) 次排便").font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer(); CatIcon(index: 23, size: 70)
+            }.listRowBackground(honey.opacity(0.25))
+            Section("账户与记账") {
+                NavigationLink { AccountsView() } label: { Label("账户与余额", systemImage: "creditcard") }
+                NavigationLink { FinancePreferences() } label: { Label("记账偏好", systemImage: "slider.horizontal.3") }
+                NavigationLink { CategorySettings() } label: { Label("分类排序", systemImage: "square.grid.2x2") }
+            }
+            Section("固定收支与快捷记录") {
+                NavigationLink { RecurringList() } label: { Label("固定收支", systemImage: "repeat") }
+                NavigationLink { QuickEntryGuide() } label: { Label("快捷记账", systemImage: "bolt") }
+            }
+            Section("便便与提醒") {
+                NavigationLink { BowelPreferences() } label: { Label("固定常态与图标", systemImage: "face.smiling") }
+                NavigationLink { ReminderSettings() } label: { Label("排便提醒", systemImage: "bell") }
+            }
+            Section("数据管理") {
+                NavigationLink { BackupSettings() } label: { Label("备份与导出", systemImage: "externaldrive") }
+                NavigationLink { DataTransferView() } label: { Label("导入账单与恢复", systemImage: "square.and.arrow.down") }
+            }
+            Section { Text("圆景记录 · 本地保存\n睡眠记录和小组件状态同步仍在开发中。").font(.caption).foregroundStyle(.secondary) }
+        }.navigationTitle("设置").scrollContentBackground(.hidden).background(cream)
+    }
+}
+struct FinancePreferences: View {
+    @EnvironmentObject var store: Store
+    var body: some View {
+        Form {
+            Section("统计周期") {
+                Stepper("每月 \(store.state.payday) 日发薪", value: Binding(get: { store.state.payday }, set: { value in store.change { $0.payday = value } }), in: 1...31)
+                Text("首页对比前三个月相同已过天数的平均花费，仅显示百分比。").font(.caption)
+            }
+            Section("记账习惯") { Text("默认沿用上次账户；分类顺序由你调整；小标签按记录次数排列。").font(.subheadline) }
+        }.navigationTitle("记账偏好")
+    }
+}
+struct BowelPreferences: View {
+    @EnvironmentObject var store: Store
+    var body: some View {
+        Form {
+            Section("图标风格") { Picker("形态图标", selection: Binding(get: { store.state.bowelIconStyle ?? "涂鸦" }, set: { value in store.change { $0.bowelIconStyle = value } })) { Text("金渐层涂鸦").tag("涂鸦"); Text("拟真").tag("拟真") } }
+            Section("固定常态 · 不沿用上次异常") {
+                ForEach(bowelOptions, id: \.0) { item in
+                    Picker(item.0, selection: Binding(get: { store.state.bowelDefaults[item.0] ?? item.1[0] }, set: { value in store.change { $0.bowelDefaults[item.0] = value } })) { ForEach(item.1, id: \.self) { Text($0) } }
+                }
+            }
+        }.navigationTitle("固定常态与图标")
+    }
+}
+struct ReminderSettings: View {
+    @EnvironmentObject var store: Store
+    var body: some View {
+        Form {
+            Toggle("启用排便提醒", isOn: Binding(get: { store.state.remindersEnabled == true }, set: { store.setReminders($0) }))
+            Stepper("未结束记录：\(store.state.reminderHour ?? 22):00 检查", value: Binding(get: { store.state.reminderHour ?? 22 }, set: { value in store.change { $0.reminderHour = value } }), in: 0...23)
+            Text("同一次计时只提醒一次；3 天无记录提醒一次，新的排便记录会重新计算。").font(.caption)
+            if !store.reminderStatus.isEmpty { Text(store.reminderStatus).font(.caption).foregroundStyle(.secondary) }
+        }.navigationTitle("排便提醒")
+    }
+}
+struct BackupSettings: View {
+    @EnvironmentObject var store: Store
     @State private var exporting = false
     @State private var document = BackupDocument(bytes: Data())
     var body: some View {
         Form {
-            Section("记账") { Stepper("发薪周期从每月 \(store.state.payday) 日开始", value: Binding(get: { store.state.payday }, set: { value in store.change { $0.payday = value } }), in: 1...31)
-                NavigationLink("账户与余额") { AccountsView() }
-                NavigationLink("固定大类顺序") { CategorySettings() }
+            Button("导出备份到文件 / iCloud Drive") { do { document = BackupDocument(bytes: try JSONEncoder().encode(store.state)); exporting = true } catch { store.error = error.localizedDescription } }
+            Text("备份包括账户、账单、排便记录、固定收支和偏好。可保存到 iCloud Drive，当前需要手动导出。").font(.caption)
+        }.navigationTitle("备份与导出")
+            .fileExporter(isPresented: $exporting, document: document, contentType: .json, defaultFilename: "圆景记录备份") { result in if case .failure(let error) = result { store.error = error.localizedDescription } }
+    }
+}
+struct QuickEntryGuide: View {
+    var body: some View {
+        List {
+            Section("小组件") { Text("长按桌面 → 编辑 → 添加小组件 → 圆景记录，添加记账入口。") }
+            Section("轻点背面打开记账") {
+                Text("1. 打开「快捷指令」，新建快捷指令。")
+                Text("2. 添加「URL」操作，填入下方地址，再添加「打开 URL」。")
+                Text("yuanjing://expense").textSelection(.enabled).font(.system(.body, design: .monospaced))
+                Button("复制记账地址") { UIPasteboard.general.string = "yuanjing://expense" }
+                Text("3. 命名为「圆景记一笔」。在手机设置 → 辅助功能 → 触控 → 轻点背面中，选轻点两下或三下并绑定此快捷指令。")
             }
-            Section("排便常态 · 不沿用上次异常") { ForEach(bowelOptions, id: \.0) { item in Picker(item.0, selection: Binding(get: { store.state.bowelDefaults[item.0] ?? item.1[0] }, set: { value in store.change { $0.bowelDefaults[item.0] = value } })) { ForEach(item.1, id: \.self) { Text($0) } } } }
-            Section("提醒") {
-                Toggle("启用排便提醒", isOn: Binding(get: { store.state.remindersEnabled == true }, set: { store.setReminders($0) }))
-                Stepper("未结束记录：每天 \(store.state.reminderHour ?? 22):00 检查", value: Binding(get: { store.state.reminderHour ?? 22 }, set: { value in store.change { $0.reminderHour = value } }), in: 0...23)
-                Text("同一次计时只提醒一次；3 天无记录提醒一次，新的排便记录会重新计算。").font(.caption)
-                if !store.reminderStatus.isEmpty { Text(store.reminderStatus).font(.caption).foregroundStyle(.secondary) }
-            }
-            Section("本地数据") {
-                Button("导出备份到文件 / iCloud Drive") { do { document = BackupDocument(bytes: try JSONEncoder().encode(store.state)); exporting = true } catch { store.error = error.localizedDescription } }
-                NavigationLink("导入懒猫账单 / 恢复备份") { DataTransferView() }
-                Text("可将备份存入 iCloud Drive。导入历史账单不改变当前余额；恢复备份前会保留当前数据副本。").font(.caption)
-            }
-            Section { Text("圆景记录 · 原生开发版 0.2\n小组件实时状态同步尚未启用。").font(.caption).foregroundStyle(.secondary) }
-        }.navigationTitle("设置").fileExporter(isPresented: $exporting, document: document, contentType: .json, defaultFilename: "圆景记录备份") { result in if case .failure(let error) = result { store.error = error.localizedDescription } }
+            Section("截图识别与自动记账") { Text("当前快捷入口直接打开记账页，金额和标签由你确认填写。支付截图识别尚未接入。") }
+            Section { Link("Apple：轻点背面运行快捷指令", destination: URL(string: "https://support.apple.com/zh-cn/guide/shortcuts/apd897693606/ios")!) }
+        }.navigationTitle("快捷记账")
     }
 }
 struct CategorySettings: View {
@@ -551,5 +627,118 @@ struct EntryEditor: View {
                 if store.change({ try Ledger.replace(edited, in: &$0) }) { dismiss() }
             } }
         }.onAppear { amount = Ledger.money(entry.amount); date = entry.date; account = entry.account; destination = entry.destination; category = entry.category; tag = entry.tag } }
+    }
+}
+
+
+struct RecurringList: View {
+    @EnvironmentObject var store: Store
+    @State private var editing: RecurringRule? = nil
+    @State private var creating = false
+    @State private var confirming: RecurringRule? = nil
+    @State private var removing: RecurringRule? = nil
+    var body: some View {
+        List {
+            Section {
+                Text("到期待确认，确认前不扣余额。每次确认一笔，按本期到期日记账；错过多期会依次列出。").font(.caption)
+                Button("添加固定收支") { creating = true }.accessibilityIdentifier("add-recurring")
+            }
+            let pending = Recurring.pending(store.state)
+            if !pending.isEmpty {
+                Section("到期待确认") {
+                    ForEach(pending) { rule in
+                        VStack(alignment: .leading, spacing: 10) {
+                            ruleLabel(rule)
+                            HStack {
+                                Button("确认记账") { confirming = rule }.accessibilityIdentifier("confirm-recurring-" + rule.name)
+                                Spacer()
+                                Button("跳过本期") { store.change { try Recurring.skip(rule.id, occurrence: rule.nextIndex, in: &$0) } }
+                            }.buttonStyle(GentleButtonStyle())
+                        }
+                    }
+                }
+            }
+            Section("全部固定收支") {
+                if (store.state.recurringRules ?? []).isEmpty { Text("房租、订阅、工资，都可以在这里安排。").foregroundStyle(.secondary) }
+                ForEach(store.state.recurringRules ?? []) { rule in
+                    Button { editing = rule } label: { ruleLabel(rule) }.buttonStyle(GentleButtonStyle())
+                        .swipeActions(allowsFullSwipe: false) {
+                            Button("删除") { removing = rule }.tint(.red).buttonStyle(.automatic)
+                            Button(rule.paused ? "恢复" : "暂停") { store.change { state in
+                                if let i = state.recurringRules?.firstIndex(where: { $0.id == rule.id }) { state.recurringRules?[i].paused.toggle() }
+                            } }.tint(.orange).buttonStyle(.automatic)
+                        }
+                }
+            }
+        }.navigationTitle("固定收支").scrollContentBackground(.hidden).background(cream)
+            .sheet(isPresented: $creating) { RecurringEditor() }
+            .sheet(item: $editing) { RecurringEditor(existing: $0) }
+            .alert("确认这期已发生？", isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } }), presenting: confirming) { rule in
+                Button("取消", role: .cancel) {}
+                Button("确认记账") { store.change { try Recurring.confirm(rule.id, occurrence: rule.nextIndex, in: &$0) }; confirming = nil }
+            } message: { rule in Text("\(rule.name) · \(rule.kind) ¥ \(Ledger.money(rule.amount))\n账户：\(store.accountName(rule.account))\n日期：\(rule.due().formatted(date: .numeric, time: .omitted))") }
+            .alert("删除固定收支安排？", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), presenting: removing) { rule in
+                Button("取消", role: .cancel) {}
+                Button("删除安排", role: .destructive) { store.change { $0.recurringRules?.removeAll { $0.id == rule.id } }; removing = nil }
+            } message: { _ in Text("已确认的历史账单会保留。") }
+    }
+    private func ruleLabel(_ rule: RecurringRule) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack { Text(rule.name).bold(); Spacer(); Text("\(rule.kind) ¥ " + Ledger.money(rule.amount)) }
+            Text("\(rule.frequency) · \(store.accountName(rule.account)) · \(rule.category)" + (rule.tag.isEmpty ? "" : " · " + rule.tag)).font(.caption).foregroundStyle(.secondary)
+            Text(rule.paused ? "已暂停" : "下期待处理：" + rule.due().formatted(date: .numeric, time: .omitted)).font(.caption)
+        }
+    }
+}
+struct RecurringEditor: View {
+    @EnvironmentObject var store: Store
+    @Environment(\.dismiss) var dismiss
+    var existing: RecurringRule? = nil
+    @State private var name = ""
+    @State private var kind = "支出"
+    @State private var amount = ""
+    @State private var account: UUID? = nil
+    @State private var category = "住房"
+    @State private var tag = ""
+    @State private var start = Date()
+    @State private var frequency = "每月"
+    @State private var paused = false
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("记什么") {
+                    TextField("名称，如房租", text: $name)
+                    Picker("类型", selection: $kind) { Text("支出").tag("支出"); Text("收入").tag("收入") }
+                    TextField("金额", text: $amount).keyboardType(.decimalPad)
+                    Picker("账户", selection: $account) { ForEach(store.state.accounts) { Text($0.name).tag(Optional($0.id)) } }
+                    Picker("大类", selection: $category) { ForEach(store.state.categories, id: \.self) { Text($0) } }
+                    TextField("小标签", text: $tag)
+                }
+                Section("什么时候") {
+                    Picker("重复", selection: $frequency) { ForEach(["每周", "每月", "每年"], id: \.self) { Text($0) } }
+                    DatePicker(existing == nil ? "首次日期" : "下期待处理日期", selection: $start, displayedComponents: .date)
+                    Toggle("暂停", isOn: $paused)
+                    Text("月末日期遇到短月会使用当月最后一天，之后恢复原定日期。恢复暂停后，未处理的旧期仍保留待确认。").font(.caption)
+                }
+            }.navigationTitle(existing == nil ? "添加固定收支" : "修改固定收支").toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) { Button("保存") { save() } }
+            }.onAppear {
+                account = existing?.account ?? store.state.lastAccount ?? store.state.accounts.first?.id
+                if let rule = existing { name = rule.name; kind = rule.kind; amount = Ledger.money(rule.amount); category = rule.category; tag = rule.tag; start = rule.due(); frequency = rule.frequency; paused = rule.paused }
+            }
+        }
+    }
+    private func save() {
+        guard let account, let number = Ledger.cents(amount), number > 0, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { store.error = "请填写名称和有效金额"; return }
+        var rule = existing ?? RecurringRule(name: name, amount: number, account: account, category: category, start: start)
+        if existing == nil || !Calendar.current.isDate(start, inSameDayAs: rule.due()) || frequency != rule.frequency { rule.start = start; rule.nextIndex = 0 }
+        rule.name = name.trimmingCharacters(in: .whitespacesAndNewlines); rule.kind = kind; rule.amount = number
+        rule.account = account; rule.category = category; rule.tag = tag.trimmingCharacters(in: .whitespacesAndNewlines); rule.frequency = frequency; rule.paused = paused
+        if store.change({ state in
+            if state.recurringRules == nil { state.recurringRules = [] }
+            if let i = state.recurringRules?.firstIndex(where: { $0.id == rule.id }) { state.recurringRules?[i] = rule } else { state.recurringRules?.append(rule) }
+            try Backup.validate(state)
+        }) { dismiss() }
     }
 }

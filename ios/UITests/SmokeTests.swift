@@ -1,5 +1,37 @@
 import XCTest
 final class SmokeTests: XCTestCase {
+    func testSettingsNavigationAndRecurringConfirmation() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--test-store", UUID().uuidString]
+        app.launch()
+        app.tabBars.buttons["设置"].tap()
+        XCTAssertTrue(app.navigationBars["设置"].waitForExistence(timeout: 5))
+        app.buttons["账户与余额"].tap()
+        XCTAssertTrue(app.navigationBars["账户与余额"].waitForExistence(timeout: 5))
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["设置"].waitForExistence(timeout: 5))
+        app.buttons["固定收支"].tap()
+        app.buttons["add-recurring"].tap()
+        app.textFields["名称，如房租"].tap(); app.textFields["名称，如房租"].typeText("房租测试")
+        app.textFields["金额"].tap(); app.textFields["金额"].typeText("100")
+        app.textFields["小标签"].tap(); app.textFields["小标签"].typeText("固定房租")
+        app.navigationBars.buttons["保存"].tap()
+        XCTAssertTrue(app.buttons["confirm-recurring-房租测试"].waitForExistence(timeout: 5))
+        app.tabBars.buttons["记账"].tap()
+        XCTAssertFalse(app.staticTexts["−100.00"].exists)
+        app.buttons["pending-recurring"].tap()
+        app.buttons["confirm-recurring-房租测试"].tap()
+        app.alerts.buttons["确认记账"].tap()
+        XCTAssertFalse(app.buttons["confirm-recurring-房租测试"].exists)
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.buttons["new-entry"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["−100.00"].exists)
+        app.terminate(); app.launch()
+        XCTAssertTrue(app.staticTexts["−100.00"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["pending-recurring"].exists)
+    }
+
     func testSwipeActionsForBothRecordTypes() throws {
         continueAfterFailure = false
         let app = XCUIApplication()

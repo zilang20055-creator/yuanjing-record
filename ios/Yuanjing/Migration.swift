@@ -139,6 +139,14 @@ enum Backup {
         }
         for item in state.bowels { try require(item.end >= item.start, "排便结束早于开始") }
         for item in state.calibrations { try require(accounts.contains(item.account), "校准对应账户不存在") }
+        let rules = state.recurringRules ?? []
+        try require(rules.count <= 1000 && Set(rules.map(\.id)).count == rules.count, "固定收支数量或编号无效")
+        for rule in rules {
+            try require(!rule.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && ["支出", "收入"].contains(rule.kind), "固定收支名称或类型无效")
+            try require(accounts.contains(rule.account) && rule.amount > 0 && rule.amount <= 999_999_999_999, "固定收支金额或账户无效")
+            try require(["每周", "每月", "每年"].contains(rule.frequency) && (0...10000).contains(rule.nextIndex), "固定收支周期无效")
+            try require(rule.start.timeIntervalSince1970 >= -2208988800 && rule.start.timeIntervalSince1970 < 4133980800, "固定收支日期无效")
+        }
     }
 }
 

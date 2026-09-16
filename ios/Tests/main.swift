@@ -159,3 +159,31 @@ var missingDeleteRejected = false
 do { try Ledger.remove(UUID(), from: &deletionState) } catch { missingDeleteRejected = true }
 expect(missingDeleteRejected && deletionState.entries.isEmpty && deletionState.accounts[0].balance == 9000, "missing delete rejected without mutation")
 print("PASS: \(checks) including deletion checks")
+
+var recurringState = Snapshot()
+let recurringAccount = recurringState.accounts[0].id
+let rent = RecurringRule(name: "房租", amount: 10000, account: recurringAccount, category: "住房", start: date("2026-01-31"))
+recurringState.recurringRules = [rent]
+expect(Recurring.pending(recurringState, now: date("2026-01-30"), calendar: calendar).isEmpty, "recurring is not due before start")
+expect(recurringState.accounts[0].balance == 0 && recurringState.entries.isEmpty, "creating recurring plan never books money")
+try Recurring.confirm(rent.id, occurrence: 0, in: &recurringState, now: date("2026-01-31"), calendar: calendar)
+expect(recurringState.accounts[0].balance == -10000 && recurringState.entries.count == 1, "confirm recurring books one expense")
+expect(calendar.isDate(recurringState.recurringRules![0].due(calendar: calendar), inSameDayAs: date("2026-02-28")), "monthly 31 clamps to February end")
+var duplicateRecurringRejected = false
+do { try Recurring.confirm(rent.id, occurrence: 0, in: &recurringState, now: date("2026-03-31"), calendar: calendar) } catch { duplicateRecurringRejected = true }
+expect(duplicateRecurringRejected && recurringState.entries.count == 1, "stale confirmation cannot book twice")
+try Recurring.skip(rent.id, occurrence: 1, in: &recurringState)
+expect(calendar.isDate(recurringState.recurringRules![0].due(calendar: calendar), inSameDayAs: date("2026-03-31")) && recurringState.accounts[0].balance == -10000, "skip does not move money and cadence returns to 31")
+recurringState.recurringRules![0].paused = true
+expect(Recurring.pending(recurringState, now: date("2026-05-31"), calendar: calendar).isEmpty, "paused recurring is not pending")
+recurringState.recurringRules![0].paused = false
+expect(Recurring.pending(recurringState, now: date("2026-05-31"), calendar: calendar).count == 1, "overdue plan exposes one occurrence at a time")
+try Ledger.remove(recurringState.entries[0].id, from: &recurringState)
+expect(recurringState.recurringRules![0].nextIndex == 2, "deleting generated bill does not reopen completed period")
+let recurringRestored = try Backup.decode(JSONEncoder().encode(recurringState))
+expect(recurringRestored.recurringRules![0].nextIndex == 2, "backup preserves recurring progress")
+var weeklyRule = rent; weeklyRule.frequency = "每周"; weeklyRule.nextIndex = 1
+expect(calendar.isDate(weeklyRule.due(calendar: calendar), inSameDayAs: date("2026-02-07")), "weekly cadence advances seven calendar days")
+var yearlyRule = rent; yearlyRule.frequency = "每年"; yearlyRule.start = date("2024-02-29"); yearlyRule.nextIndex = 1
+expect(calendar.isDate(yearlyRule.due(calendar: calendar), inSameDayAs: date("2025-02-28")), "yearly leap day clamps safely")
+print("PASS: \(checks) including recurring checks")

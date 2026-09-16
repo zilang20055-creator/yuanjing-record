@@ -44,6 +44,7 @@ struct Snapshot: Codable {
     var entries: [Entry] = []
     var calibrations: [Calibration] = []
     var bowels: [BowelEntry] = []
+    var recurringRules: [RecurringRule]? = nil
     var runningSince: Date? = nil
     var bowelIconStyle: String? = nil
     var remindersEnabled: Bool? = nil
@@ -161,5 +162,40 @@ struct ReminderPlan {
             plans.append(ReminderPlan(id: "yuanjing.gap", signature: "\(anchor.timeIntervalSince1970)", date: max(due, now.addingTimeInterval(5)), title: "已经 3 天没有排便记录", body: "看看是否忘了记录，也留意一下自己的身体感受。"))
         }
         return plans
+    }
+}
+
+struct RecurringRule: Codable, Identifiable {
+    var id = UUID()
+    var name: String
+    var kind = "支出"
+    var amount: Int64
+    var account: UUID
+    var category: String
+    var tag = ""
+    var start: Date
+    var frequency = "每月"
+    var nextIndex = 0
+    var paused = false
+    func due(calendar: Calendar = .current) -> Date {
+        let component: Calendar.Component = frequency == "每周" ? .weekOfYear : frequency == "每年" ? .year : .month
+        return calendar.date(byAdding: component, value: nextIndex, to: calendar.startOfDay(for: start)) ?? start
+    }
+}
+enum Recurring {
+    static func pending(_ state: Snapshot, now: Date = Date(), calendar: Calendar = .current) -> [RecurringRule] {
+        (state.recurringRules ?? []).filter { !$0.paused && $0.due(calendar: calendar) <= calendar.startOfDay(for: now) }.sorted { $0.due(calendar: calendar) < $1.due(calendar: calendar) }
+    }
+    static func confirm(_ id: UUID, occurrence: Int, in state: inout Snapshot, now: Date = Date(), calendar: Calendar = .current) throws {
+        var candidate = state
+        guard let index = candidate.recurringRules?.firstIndex(where: { $0.id == id }), let rule = candidate.recurringRules?[index],
+              rule.nextIndex == occurrence, !rule.paused, rule.due(calendar: calendar) <= calendar.startOfDay(for: now) else { throw ModelError.invalid("这期已处理、暂停或尚未到期") }
+        try Ledger.apply(Entry(date: rule.due(calendar: calendar), kind: rule.kind, amount: rule.amount, account: rule.account, category: rule.category, tag: rule.tag, note: "固定收支：" + rule.name), to: &candidate)
+        candidate.recurringRules?[index].nextIndex += 1
+        state = candidate
+    }
+    static func skip(_ id: UUID, occurrence: Int, in state: inout Snapshot) throws {
+        guard let index = state.recurringRules?.firstIndex(where: { $0.id == id }), state.recurringRules?[index].nextIndex == occurrence else { throw ModelError.invalid("这期已处理") }
+        state.recurringRules?[index].nextIndex += 1
     }
 }
