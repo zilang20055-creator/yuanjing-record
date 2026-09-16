@@ -199,3 +199,59 @@ enum Recurring {
         state.recurringRules?[index].nextIndex += 1
     }
 }
+
+// Read-only analytics: refunds reduce spending on their actual receipt date.
+struct AnalysisKey: Hashable { let category: String; let tag: String }
+struct AnalysisGroup: Identifiable {
+    let id: AnalysisKey
+    let amount: Int64
+    let count: Int
+}
+struct AnalysisPoint: Identifiable { var id: Date { date }; let date: Date; let amount: Int64 }
+enum FinanceAnalysis {
+    static func range(_ period: String, anchor: Date, payday: Int, calendar: Calendar = .current) -> DateInterval {
+        if period == "薪月" {
+            let start = Ledger.cycleStart(anchor, payday: payday, calendar: calendar)
+            let month = calendar.dateInterval(of: .month, for: start)!.start
+            let nextMonth = calendar.date(byAdding: .month, value: 1, to: month)!
+            let day = min(max(payday, 1), calendar.range(of: .day, in: .month, for: nextMonth)!.count)
+            return DateInterval(start: start, end: calendar.date(byAdding: .day, value: day - 1, to: nextMonth)!)
+        }
+        if period == "周" {
+            let day = calendar.startOfDay(for: anchor)
+            let start = calendar.date(byAdding: .day, value: -((calendar.component(.weekday, from: day) + 5) % 7), to: day)!
+            return DateInterval(start: start, end: calendar.date(byAdding: .day, value: 7, to: start)!)
+        }
+        return calendar.dateInterval(of: period == "年" ? .year : .month, for: anchor)!
+    }
+    static func entries(_ all: [Entry], in range: DateInterval, kind: String) -> [Entry] {
+        all.filter { $0.date >= range.start && $0.date < range.end && (kind == "收入" ? $0.kind == "收入" : ["支出", "退款", "分摊回款"].contains($0.kind)) }
+    }
+    static func signed(_ entry: Entry) -> Int64 { ["退款", "分摊回款"].contains(entry.kind) ? -entry.amount : entry.amount }
+    static func key(_ entry: Entry, all: [Entry], tags: Bool) -> AnalysisKey {
+        let original = entry.parent.flatMap { id in all.first { $0.id == id && $0.kind == "支出" } }
+        return AnalysisKey(category: original?.category ?? entry.category, tag: tags ? (original?.tag ?? entry.tag) : "")
+    }
+    static func groups(_ entries: [Entry], all: [Entry], tags: Bool) -> [AnalysisGroup] {
+        Dictionary(grouping: entries) { key($0, all: all, tags: tags) }.map { key, values in
+            AnalysisGroup(id: key, amount: values.reduce(0) { $0 + signed($1) }, count: values.count)
+        }.sorted { $0.amount == $1.amount ? ($0.id.category, $0.id.tag) < ($1.id.category, $1.id.tag) : $0.amount > $1.amount }
+    }
+    static func elapsedDays(_ range: DateInterval, now: Date = Date(), calendar: Calendar = .current) -> Int {
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now))!
+        return max(0, calendar.dateComponents([.day], from: range.start, to: min(range.end, tomorrow)).day ?? 0)
+    }
+    static func points(_ entries: [Entry], range: DateInterval, now: Date = Date(), calendar: Calendar = .current) -> [AnalysisPoint] {
+        let end = min(range.end, calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now))!)
+        guard end > range.start else { return [] }
+        let monthly = (calendar.dateComponents([.day], from: range.start, to: end).day ?? 0) > 93
+        let component: Calendar.Component = monthly ? .month : .day
+        let grouped = Dictionary(grouping: entries.filter { $0.date < end && $0.date >= range.start }) { calendar.dateInterval(of: component, for: $0.date)!.start }
+        var result: [AnalysisPoint] = [], cursor = calendar.dateInterval(of: component, for: range.start)!.start
+        while cursor < end {
+            result.append(AnalysisPoint(date: cursor, amount: (grouped[cursor] ?? []).reduce(0) { $0 + signed($1) }))
+            cursor = calendar.date(byAdding: component, value: 1, to: cursor)!
+        }
+        return result
+    }
+}

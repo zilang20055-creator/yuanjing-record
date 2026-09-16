@@ -1,5 +1,49 @@
 import XCTest
 final class SmokeTests: XCTestCase {
+    func testAnalysisAndSettingsGrid() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--test-store", UUID().uuidString]
+        app.launch()
+        app.buttons["new-entry"].tap()
+        app.textFields["entry-tag"].tap(); app.textFields["entry-tag"].typeText("寿司郎")
+        app.buttons["标签填好了，输入金额"].tap()
+        app.buttons["key-1"].tap(); app.buttons["key-0"].tap(); app.buttons["key-0"].tap()
+        app.buttons["key-完成"].tap()
+        app.tabBars.buttons["设置"].tap()
+        let settingsShot = XCTAttachment(screenshot: app.screenshot())
+        settingsShot.name = "Settings icon grid"; settingsShot.lifetime = .keepAlways; add(settingsShot)
+        app.buttons["金额分析"].tap()
+        XCTAssertTrue(app.navigationBars["金额分析"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["analysis-total"].label, "¥ 100.00")
+        app.segmentedControls.buttons["收入"].tap()
+        XCTAssertEqual(app.staticTexts["analysis-total"].label, "¥ 0.00")
+        app.segmentedControls.buttons["支出"].tap()
+        app.segmentedControls.buttons["年"].tap()
+        XCTAssertEqual(app.staticTexts["analysis-total"].label, "¥ 100.00")
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["设置"].exists)
+        app.buttons["大类分析"].tap()
+        XCTAssertTrue(app.staticTexts["analysis-total"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["analysis-total"].label, "¥ 100.00")
+        let group = app.buttons["analysis-group-食物"]
+        if !group.isHittable { app.swipeUp() }
+        group.tap()
+        XCTAssertTrue(app.staticTexts["−100.00"].waitForExistence(timeout: 5))
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.buttons["标签分析"].tap()
+        app.segmentedControls.buttons["年"].tap()
+        let search = app.textFields["analysis-tag-search"]
+        search.tap(); search.typeText("寿司郎\n")
+        XCTAssertEqual(app.staticTexts["analysis-total"].label, "¥ 100.00")
+        let tagShot = XCTAttachment(screenshot: app.screenshot())
+        tagShot.name = "Annual tag analysis"; tagShot.lifetime = .keepAlways; add(tagShot)
+        app.segmentedControls.buttons["区间"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["analysis-start-date"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["analysis-end-date"].firstMatch.exists)
+    }
+
     func testSettingsNavigationAndRecurringConfirmation() throws {
         continueAfterFailure = false
         let app = XCUIApplication()

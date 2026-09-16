@@ -98,7 +98,7 @@ struct HomeView: View {
                     NavigationLink { RecurringList() } label: { Label("固定收支 · \(pendingCount) 项待确认", systemImage: "repeat") }
                         .accessibilityIdentifier("pending-recurring")
                 }
-                HStack { Text("最近记录").font(.title3.bold()); Spacer(); NavigationLink("分类统计") { StatisticsView() }.font(.subheadline) }
+                Text("最近记录").font(.title3.bold())
                 if store.state.entries.isEmpty { Text("先在「账户与余额」填好各项余额，\n再记下今天的第一笔吧。").foregroundStyle(.secondary).padding(.vertical, 24) }
             }.listRowSeparator(.hidden).listRowBackground(cream)
             ForEach(store.state.entries.sorted { $0.date > $1.date }) { entry in
@@ -366,31 +366,6 @@ struct AccountEditor: View {
         }.onAppear { name = account.name; debt = account.isDebt; amount = Ledger.money(account.isDebt ? -account.balance : account.balance) } }
     }
 }
-struct StatisticsView: View {
-    @EnvironmentObject var store: Store
-    @State private var start = Calendar.current.date(from: Calendar.current.dateComponents([.year], from: Date()))!
-    @State private var end = Date()
-    @State private var search = ""
-    var body: some View {
-        List {
-            TextField("搜索小标签或旧备注", text: $search)
-            HStack { Button("本周期") { start = Ledger.cycleStart(Date(), payday: store.state.payday); end = Date() }; Spacer(); Button("今年") { start = Calendar.current.date(from: Calendar.current.dateComponents([.year], from: Date()))!; end = Date() } }
-            DatePicker("开始", selection: $start, displayedComponents: .date)
-            DatePicker("结束", selection: $end, in: start..., displayedComponents: .date)
-            let entries = store.state.entries.filter { $0.date >= Calendar.current.startOfDay(for: start) && $0.date < Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: end))! && ["支出", "退款", "分摊回款"].contains($0.kind) && (search.isEmpty || ($0.category + $0.tag + $0.note).localizedCaseInsensitiveContains(search)) }
-            let netTotal = entries.reduce(Int64(0)) { $0 + ($1.kind == "支出" ? $1.amount : -$1.amount) }
-            LabeledContent("筛选净支出", value: "¥ " + Ledger.money(netTotal))
-            let groups = Dictionary(grouping: entries) { $0.category + ($0.tag.isEmpty ? "" : " · " + $0.tag) }
-            ForEach(groups.keys.sorted(), id: \.self) { key in
-                let items = groups[key]!
-                let paid = items.filter { $0.kind == "支出" }.reduce(Int64(0)) { $0 + $1.amount }
-                let returned = items.filter { $0.kind != "支出" }.reduce(Int64(0)) { $0 + $1.amount }
-                VStack(alignment: .leading, spacing: 5) { HStack { Text(key); Spacer(); Text("¥ " + Ledger.money(paid - returned)).bold() }; Text("支出 \(Ledger.money(paid)) · 回款 \(Ledger.money(returned))" + (netTotal > 0 && paid >= returned ? " · " + String(format: "%.1f%%", Double(paid - returned) / Double(netTotal) * 100) : "")).font(.caption).foregroundStyle(.secondary) }
-            }
-            Text("按实际收支日期统计，回款包括退款和朋友分摊。").font(.caption)
-        }.navigationTitle("分类与小标签统计").scrollContentBackground(.hidden).background(cream)
-    }
-}
 struct BackupDocument: FileDocument {
     static var readableContentTypes: [UTType] { [.json] }
     var bytes: Data
@@ -398,36 +373,66 @@ struct BackupDocument: FileDocument {
     init(configuration: ReadConfiguration) throws { bytes = configuration.file.regularFileContents ?? Data() }
     func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper { FileWrapper(regularFileWithContents: bytes) }
 }
+struct SettingsTile<Destination: View>: View {
+    let title: String
+    let symbol: String
+    @ViewBuilder var destination: () -> Destination
+    var body: some View {
+        NavigationLink(destination: destination) {
+            VStack(spacing: 12) {
+                Image(systemName: symbol).font(.system(size: 27, weight: .medium))
+                    .foregroundStyle(ink, honey).frame(width: 58, height: 54)
+                    .background(honey.opacity(0.25), in: RoundedRectangle(cornerRadius: 18))
+                Text(title).font(.system(size: 14, weight: .medium)).multilineTextAlignment(.center)
+            }.frame(maxWidth: .infinity, minHeight: 112).padding(.vertical, 8)
+                .background(.white, in: RoundedRectangle(cornerRadius: 22))
+                .overlay(RoundedRectangle(cornerRadius: 22).stroke(ink.opacity(0.25), lineWidth: 1.5))
+        }.accessibilityLabel(title)
+    }
+}
 struct SettingsView: View {
     @EnvironmentObject var store: Store
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 10), count: 3)
     var body: some View {
-        List {
-            HStack {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("把日常安排好").font(.title2.bold())
-                    Text("\(store.state.entries.count) 笔账单 · \(store.state.bowels.count) 次排便").font(.caption).foregroundStyle(.secondary)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("把日常安排好").font(.title2.bold())
+                        Text("\(store.state.entries.count) 笔账单 · \(store.state.bowels.count) 次排便").font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer(); CatIcon(index: 23, size: 70)
+                }.card(honey.opacity(0.25))
+                heading("账本分析")
+                LazyVGrid(columns: columns) {
+                    SettingsTile(title: "金额分析", symbol: "chart.xyaxis.line") { AnalysisView(mode: "金额分析") }
+                    SettingsTile(title: "大类分析", symbol: "chart.pie") { AnalysisView(mode: "大类分析") }
+                    SettingsTile(title: "标签分析", symbol: "tag") { AnalysisView(mode: "标签分析") }
                 }
-                Spacer(); CatIcon(index: 23, size: 70)
-            }.listRowBackground(honey.opacity(0.25))
-            Section("账户与记账") {
-                NavigationLink { AccountsView() } label: { Label("账户与余额", systemImage: "creditcard") }
-                NavigationLink { FinancePreferences() } label: { Label("记账偏好", systemImage: "slider.horizontal.3") }
-                NavigationLink { CategorySettings() } label: { Label("分类排序", systemImage: "square.grid.2x2") }
-            }
-            Section("固定收支与快捷记录") {
-                NavigationLink { RecurringList() } label: { Label("固定收支", systemImage: "repeat") }
-                NavigationLink { QuickEntryGuide() } label: { Label("快捷记账", systemImage: "bolt") }
-            }
-            Section("便便与提醒") {
-                NavigationLink { BowelPreferences() } label: { Label("固定常态与图标", systemImage: "face.smiling") }
-                NavigationLink { ReminderSettings() } label: { Label("排便提醒", systemImage: "bell") }
-            }
-            Section("数据管理") {
-                NavigationLink { BackupSettings() } label: { Label("备份与导出", systemImage: "externaldrive") }
-                NavigationLink { DataTransferView() } label: { Label("导入账单与恢复", systemImage: "square.and.arrow.down") }
-            }
-            Section { Text("圆景记录 · 本地保存\n睡眠记录和小组件状态同步仍在开发中。").font(.caption).foregroundStyle(.secondary) }
-        }.navigationTitle("设置").scrollContentBackground(.hidden).background(cream)
+                heading("账户与记账")
+                LazyVGrid(columns: columns) {
+                    SettingsTile(title: "账户与余额", symbol: "creditcard") { AccountsView() }
+                    SettingsTile(title: "固定收支", symbol: "calendar.badge.clock") { RecurringList() }
+                    SettingsTile(title: "记账偏好", symbol: "slider.horizontal.3") { FinancePreferences() }
+                    SettingsTile(title: "分类排序", symbol: "square.grid.2x2") { CategorySettings() }
+                    SettingsTile(title: "快捷记账", symbol: "bolt") { QuickEntryGuide() }
+                }
+                heading("便便与提醒")
+                LazyVGrid(columns: columns) {
+                    SettingsTile(title: "固定常态与图标", symbol: "face.smiling") { BowelPreferences() }
+                    SettingsTile(title: "排便提醒", symbol: "bell") { ReminderSettings() }
+                }
+                heading("数据管理")
+                LazyVGrid(columns: columns) {
+                    SettingsTile(title: "备份与导出", symbol: "externaldrive") { BackupSettings() }
+                    SettingsTile(title: "导入账单与恢复", symbol: "square.and.arrow.down") { DataTransferView() }
+                }
+                Text("圆景记录 · 本地保存").font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity)
+            }.padding(16)
+        }.navigationTitle("设置").background(cream).foregroundStyle(ink)
+    }
+    private func heading(_ text: String) -> some View {
+        HStack { RoundedRectangle(cornerRadius: 3).fill(honey).frame(width: 5, height: 20); Text(text).font(.headline) }
     }
 }
 struct FinancePreferences: View {
