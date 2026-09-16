@@ -177,3 +177,26 @@ extension Ledger {
         state = candidate
     }
 }
+
+
+extension Ledger {
+    /// Delete a record and its linked returns atomically; later balance calibrations take precedence.
+    static func remove(_ id: UUID, from state: inout Snapshot) throws {
+        guard state.entries.contains(where: { $0.id == id }) else { throw ModelError.invalid("记录不存在") }
+        var candidate = state
+        let removed = candidate.entries.filter { $0.id == id || $0.parent == id }
+        for entry in removed where entry.sourceFields == nil {
+            var effects = [entry.account: entry.kind == "支出" || entry.kind == "转账" ? -entry.amount : entry.amount]
+            if entry.kind == "转账", let destination = entry.destination { effects[destination, default: 0] += entry.amount }
+            for index in candidate.accounts.indices {
+                let account = candidate.accounts[index].id
+                let calibrated = candidate.calibrations.filter { $0.account == account }.map(\.date).max()
+                if let calibrated, calibrated >= (entry.balanceAppliedAt ?? entry.date) { continue }
+                candidate.accounts[index].balance -= effects[account] ?? 0
+            }
+        }
+        candidate.entries.removeAll { $0.id == id || $0.parent == id }
+        try Backup.validate(candidate)
+        state = candidate
+    }
+}

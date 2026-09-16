@@ -1,5 +1,50 @@
 import XCTest
 final class SmokeTests: XCTestCase {
+    func testSwipeActionsForBothRecordTypes() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--test-store", UUID().uuidString]
+        app.launch()
+        app.buttons["new-entry"].tap()
+        app.textFields["entry-tag"].tap()
+        app.textFields["entry-tag"].typeText("左滑测试")
+        app.buttons["标签填好了，输入金额"].tap()
+        app.buttons["key-1"].tap(); app.buttons["key-0"].tap()
+        app.buttons["key-完成"].tap()
+        let row = app.descendants(matching: .any).matching(identifier: "finance-row-左滑测试").firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        row.swipeLeft()
+        for title in ["复制", "退款", "删除", "修改"] { XCTAssertTrue(app.buttons[title].exists) }
+        app.buttons["复制"].tap()
+        XCTAssertEqual(app.textFields["entry-tag"].value as? String, "左滑测试")
+        XCTAssertTrue(app.staticTexts["¥ 10.00"].exists)
+        app.navigationBars.buttons["取消"].tap()
+        row.swipeLeft(); app.buttons["退款"].tap()
+        app.buttons["key-1"].tap(); app.buttons["key-完成"].tap()
+        XCTAssertTrue(app.staticTexts["+1.00"].waitForExistence(timeout: 5))
+        let original = app.cells.containing(.staticText, identifier: "−10.00").firstMatch
+        original.swipeLeft(); app.buttons["修改"].tap()
+        XCTAssertTrue(app.textFields["小标签"].waitForExistence(timeout: 5))
+        app.navigationBars.buttons["保存"].tap()
+        original.swipeLeft(); app.buttons["删除"].tap()
+        app.alerts.buttons["删除记录"].tap()
+        XCTAssertFalse(app.staticTexts["−10.00"].exists)
+        XCTAssertFalse(app.staticTexts["+1.00"].exists)
+        app.tabBars.buttons["便便"].tap()
+        app.buttons["开始便便"].tap(); app.buttons["结束并记录"].tap()
+        app.navigationBars.buttons["保存"].tap()
+        let bowel = app.buttons["bowel-record-row"].firstMatch
+        if !bowel.isHittable { app.swipeUp() }
+        bowel.swipeLeft(); app.buttons["修改"].tap()
+        app.buttons["bowel-形态-颗粒状"].tap()
+        app.navigationBars.buttons["保存"].tap()
+        if !bowel.isHittable { app.swipeUp() }
+        XCTAssertTrue(app.staticTexts["颗粒状 · 咖啡色"].exists)
+        bowel.swipeLeft(); app.buttons["删除"].tap()
+        app.alerts.buttons["删除记录"].tap()
+        XCTAssertFalse(bowel.exists)
+    }
+
     func testBowelInlineIconsAndNoResult() throws {
         continueAfterFailure = false
         let app = XCUIApplication()

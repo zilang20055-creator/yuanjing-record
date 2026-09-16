@@ -131,3 +131,31 @@ let importedBalances = migrationState.accounts
 try Ledger.replace(importedCorrection, in: &migrationState)
 expect(migrationState.accounts == importedBalances, "historical correction does not replay balance effects")
 print("PASS: \(checks) including correction checks")
+
+var deletionState = Snapshot()
+let deletionDebit = deletionState.accounts[0].id, deletionCredit = deletionState.accounts[1].id
+let deletionPurchase = Entry(kind: "支出", amount: 30000, account: deletionDebit, category: "食物")
+try Ledger.apply(deletionPurchase, to: &deletionState)
+let deletionRefund = Entry(kind: "退款", amount: 5000, account: deletionCredit, category: "食物", parent: deletionPurchase.id)
+try Ledger.apply(deletionRefund, to: &deletionState)
+try Ledger.remove(deletionRefund.id, from: &deletionState)
+expect(deletionState.entries.count == 1 && deletionState.accounts[1].balance == 0 && deletionState.accounts[0].balance == -30000, "delete deletionRefund restores its account and keeps expense")
+try Ledger.apply(deletionRefund, to: &deletionState)
+try Ledger.apply(Entry(kind: "分摊回款", amount: 10000, account: deletionCredit, category: "食物", parent: deletionPurchase.id), to: &deletionState)
+try Ledger.remove(deletionPurchase.id, from: &deletionState)
+expect(deletionState.entries.isEmpty && deletionState.accounts.allSatisfy { $0.balance == 0 }, "delete original reverses expense and linked returns without dangling parents")
+let deletionTransfer = Entry(kind: "转账", amount: 1500, account: deletionDebit, destination: deletionCredit, category: "转账")
+try Ledger.apply(deletionTransfer, to: &deletionState)
+deletionState.calibrations.append(Calibration(account: deletionDebit, before: -1500, after: 9000))
+deletionState.accounts[0].balance = 9000
+try Ledger.remove(deletionTransfer.id, from: &deletionState)
+expect(deletionState.accounts[0].balance == 9000 && deletionState.accounts[1].balance == 0, "delete deletionTransfer respects each account calibration independently")
+let importedToDelete = migrationState.entries[0].id
+let balancesBeforeDelete = migrationState.accounts
+try Ledger.remove(importedToDelete, from: &migrationState)
+expect(migrationState.accounts == balancesBeforeDelete && migrationState.entries.isEmpty, "deleting imported record does not replay balance")
+let encodedBeforeMissingDelete = try JSONEncoder().encode(deletionState)
+var missingDeleteRejected = false
+do { try Ledger.remove(UUID(), from: &deletionState) } catch { missingDeleteRejected = true }
+expect(missingDeleteRejected && deletionState.entries.isEmpty && deletionState.accounts[0].balance == 9000, "missing delete rejected without mutation")
+print("PASS: \(checks) including deletion checks")

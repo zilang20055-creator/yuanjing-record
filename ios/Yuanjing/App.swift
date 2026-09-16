@@ -76,8 +76,8 @@ struct HomeView: View {
     @EnvironmentObject var store: Store
     @Binding var newEntry: Bool
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 18) {
+        List {
+            VStack(alignment: .leading, spacing: 18) {
                 HStack { Text("圆景记录").font(.largeTitle.bold()); Spacer(); NavigationLink { SettingsView() } label: { Image(systemName: "gearshape").font(.title2) }.accessibilityLabel("设置") }
                 NavigationLink { AccountsView() } label: {
                     HStack {
@@ -94,11 +94,42 @@ struct HomeView: View {
                 Button { newEntry = true } label: { HStack { Image(systemName: "plus"); Text("记一笔").bold() }.frame(maxWidth: .infinity).card(honey) }.buttonStyle(GentleButtonStyle()).accessibilityIdentifier("new-entry")
                 HStack { Text("最近记录").font(.title3.bold()); Spacer(); NavigationLink("分类统计") { StatisticsView() }.font(.subheadline) }
                 if store.state.entries.isEmpty { Text("先在「账户与余额」填好各项余额，\n再记下今天的第一笔吧。").foregroundStyle(.secondary).padding(.vertical, 24) }
-                ForEach(store.state.entries.sorted { $0.date > $1.date }) { entry in
-                    NavigationLink { EntryDetail(entry: entry) } label: { EntryRow(entry: entry) }.buttonStyle(GentleButtonStyle())
-                }
-            }.padding(20)
-        }.background(cream).toolbar(.hidden, for: .navigationBar).foregroundStyle(ink)
+            }.listRowSeparator(.hidden).listRowBackground(cream)
+            ForEach(store.state.entries.sorted { $0.date > $1.date }) { entry in
+                FinanceRecordRow(entry: entry)
+                    .listRowBackground(cream)
+            }
+        }.listStyle(.plain).scrollContentBackground(.hidden).background(cream)
+            .toolbar(.hidden, for: .navigationBar).foregroundStyle(ink)
+    }
+}
+struct FinanceRecordRow: View {
+    @EnvironmentObject var store: Store
+    let entry: Entry
+    @State private var action: String? = nil
+    @State private var deleting = false
+    private var original: Entry? { store.state.entries.first { $0.id == entry.parent } }
+    var body: some View {
+        NavigationLink { EntryDetail(entry: entry) } label: { EntryRow(entry: entry) }
+            .accessibilityIdentifier("finance-row-" + entry.tag)
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                Button("修改") { action = "修改" }.tint(.brown).buttonStyle(.automatic)
+                Button("删除") { deleting = true }.tint(.red).buttonStyle(.automatic)
+                if entry.kind == "支出" { Button("退款") { action = "退款" }.tint(.orange).buttonStyle(.automatic) }
+                Button("复制") { action = "复制" }.tint(.blue).buttonStyle(.automatic)
+            }
+            .sheet(isPresented: Binding(get: { action != nil }, set: { if !$0 { action = nil } })) {
+                if action == "修改" { EntryEditor(entry: entry) }
+                else if action == "退款" { NavigationStack { EntryForm(parent: entry, kind: "退款") } }
+                else { NavigationStack { EntryForm(parent: original, copying: entry, kind: entry.kind) } }
+            }
+            .alert("删除这笔记录？", isPresented: $deleting) {
+                Button("取消", role: .cancel) {}
+                Button("删除记录", role: .destructive) { store.change { try Ledger.remove(entry.id, from: &$0) } }
+            } message: {
+                let count = store.state.entries.filter { $0.parent == entry.id }.count
+                Text((count > 0 ? "同时删除关联的 \(count) 笔退款或分摊回款。" : "") + "将撤销尚未被余额校准覆盖的账户变动；历史导入账单不调整余额。删除后无法直接撤销。")
+            }
     }
 }
 struct EntryRow: View {
@@ -116,6 +147,7 @@ struct EntryForm: View {
     @EnvironmentObject var store: Store
     @Environment(\.dismiss) var dismiss
     var parent: Entry? = nil
+    var copying: Entry? = nil
     @State var kind = "支出"
     @State private var category = "食物"
     @State private var tag = ""
@@ -187,7 +219,11 @@ struct EntryForm: View {
             }
         }.padding(16).background(cream).foregroundStyle(ink).navigationTitle(parent == nil ? "记一笔" : kind).navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } } }
-            .onAppear { account = store.state.lastAccount ?? store.state.accounts.first?.id; if let parent { category = parent.category; tag = parent.tag } }
+            .onAppear {
+                account = store.state.lastAccount ?? store.state.accounts.first?.id
+                if let parent { category = parent.category; tag = parent.tag }
+                if let copying { account = copying.account; destination = copying.destination; category = copying.category; tag = copying.tag; amount = Ledger.money(copying.amount) }
+            }
             .sheet(isPresented: $tagsShown) {
                 NavigationStack {
                     VStack(alignment: .leading, spacing: 16) {
@@ -231,7 +267,7 @@ struct EntryForm: View {
         }
         if key == "完成" {
             guard let value = evaluated(), value > 0, let account else { store.error = "请输入大于 0 的金额"; return }
-            if store.add(Entry(date: date, kind: kind, amount: value, account: account, destination: destination, category: category, tag: tag.trimmingCharacters(in: .whitespacesAndNewlines), note: "", parent: parent?.id)) { dismiss() }; return
+            if store.add(Entry(date: date, kind: kind, amount: value, account: account, destination: destination, category: category, tag: tag.trimmingCharacters(in: .whitespacesAndNewlines), note: copying?.note ?? "", parent: parent?.id)) { dismiss() }; return
         }
         if key == "." { if !amount.contains(".") { amount = amount.isEmpty ? "0." : amount + "." }; return }
         if let decimal = amount.firstIndex(of: "."), amount.distance(from: decimal, to: amount.endIndex) > 2 { return }
