@@ -58,6 +58,9 @@ struct RootView: View {
                 VStack(spacing: 22) { CatIcon(index: 22, size: 150); Text("睡个好觉").font(.title.bold()); Text("睡眠记录稍后见").foregroundStyle(.secondary) }.frame(maxWidth: .infinity, maxHeight: .infinity).background(cream)
             }.tabItem { Label("睡眠", systemImage: "moon") }.tag(2)
         }
+        .onChange(of: tab) { _, _ in
+            UIImpactFeedbackGenerator(style: .light).impactOccurred(intensity: 0.65)
+        }
         .sheet(isPresented: $newEntry) { NavigationStack { EntryForm() } }
         .alert("记录提示", isPresented: Binding(get: { store.error != nil }, set: { if !$0 { store.error = nil } })) { Button("知道了") { store.error = nil } } message: { Text(store.error ?? "") }
         .onOpenURL { url in
@@ -143,17 +146,25 @@ struct EntryForm: View {
                     }
                 }.frame(maxHeight: .infinity)
             } else { Spacer(minLength: 0) }
-            HStack {
-                Picker("账户", selection: $account) { ForEach(store.state.accounts) { Text($0.name).tag(Optional($0.id)) } }.labelsHidden()
-                if kind == "转账" { Image(systemName: "arrow.right"); Picker("转入", selection: $destination) { Text("转入账户").tag(nil as UUID?); ForEach(store.state.accounts) { Text($0.name).tag(Optional($0.id)) } }.labelsHidden() }
-                Spacer(minLength: 0)
-                DatePicker("日期", selection: $date, displayedComponents: [.date, .hourAndMinute]).labelsHidden().scaleEffect(0.85, anchor: .trailing)
-                if kind != "转账" && parent == nil {
-                    Button { tagFocused = false; tagsSnapshot = store.sortedTags(category); tagsShown = true } label: {
-                        Image(systemName: "tag").font(.body).frame(width: 44, height: 44)
-                    }.accessibilityLabel("选择标签").accessibilityIdentifier("choose-tag")
+            if kind == "转账" {
+                VStack(spacing: 8) {
+                    transferAccountRow("转出账户", selection: $account, identifier: "transfer-source")
+                    transferAccountRow("转入账户", selection: $destination, identifier: "transfer-destination")
+                    DatePicker("日期", selection: $date, displayedComponents: [.date, .hourAndMinute])
+                        .font(.caption).accessibilityIdentifier("transfer-date")
                 }
-            }.font(.caption)
+            } else {
+                HStack {
+                    Picker("账户", selection: $account) { ForEach(store.state.accounts) { Text($0.name).tag(Optional($0.id)) } }.labelsHidden()
+                    Spacer(minLength: 0)
+                    DatePicker("日期", selection: $date, displayedComponents: [.date, .hourAndMinute]).labelsHidden().scaleEffect(0.85, anchor: .trailing)
+                    if parent == nil {
+                        Button { tagFocused = false; tagsSnapshot = store.sortedTags(category); tagsShown = true } label: {
+                            Image(systemName: "tag").font(.body).frame(width: 44, height: 44)
+                        }.accessibilityLabel("选择标签").accessibilityIdentifier("choose-tag")
+                    }
+                }.font(.caption)
+            }
             HStack {
                 if kind != "转账" && parent == nil {
                     TextField("填写标签", text: $tag)
@@ -187,6 +198,24 @@ struct EntryForm: View {
                     .toolbar { ToolbarItem(placement: .confirmationAction) { Button("关闭") { tagsShown = false }.accessibilityLabel("关闭标签选择") } }
                 }.buttonStyle(GentleButtonStyle()).presentationDetents([.height(320), .medium])
             }
+    }
+    private func transferAccountRow(_ title: String, selection: Binding<UUID?>, identifier: String) -> some View {
+        Menu {
+            Picker(title, selection: selection) {
+                Text("请选择账户").tag(nil as UUID?)
+                ForEach(store.state.accounts) { Text($0.name).tag(Optional($0.id)) }
+            }
+        } label: {
+            HStack(spacing: 12) {
+                Text(title).font(.caption).fixedSize()
+                Spacer(minLength: 0)
+                Text(selection.wrappedValue.map { store.accountName($0) } ?? "请选择账户")
+                    .lineLimit(1).truncationMode(.middle)
+                Image(systemName: "chevron.down").font(.caption)
+            }.padding(10).frame(maxWidth: .infinity)
+                .background(.white, in: RoundedRectangle(cornerRadius: 12))
+                .contentShape(Rectangle())
+        }.accessibilityIdentifier(identifier)
     }
     private func evaluated() -> Int64? {
         guard let right = Ledger.cents(amount) else { return nil }

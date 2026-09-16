@@ -1,5 +1,25 @@
 import XCTest
 final class SmokeTests: XCTestCase {
+    func testTransferControlsStayInsideScreen() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--test-store", UUID().uuidString]
+        app.launch()
+        XCTAssertTrue(app.buttons["new-entry"].waitForExistence(timeout: 20))
+        app.buttons["new-entry"].tap()
+        app.segmentedControls.buttons["转账"].tap()
+        let screen = app.windows.firstMatch.frame
+        for identifier in ["transfer-source", "transfer-destination", "transfer-date", "key-完成"] {
+            let control = app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+            XCTAssertTrue(control.waitForExistence(timeout: 5), identifier)
+            XCTAssertTrue(control.isHittable, identifier)
+            XCTAssertGreaterThanOrEqual(control.frame.minX, screen.minX, identifier)
+            XCTAssertLessThanOrEqual(control.frame.maxX, screen.maxX, identifier)
+        }
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
     func testExpensePersistsAndBowelTimerSurvivesRelaunch() throws {
         continueAfterFailure = false
         let app = XCUIApplication()
