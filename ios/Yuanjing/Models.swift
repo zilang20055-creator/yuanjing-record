@@ -45,6 +45,7 @@ struct Snapshot: Codable {
     var calibrations: [Calibration] = []
     var bowels: [BowelEntry] = []
     var runningSince: Date? = nil
+    var bowelIconStyle: String? = nil
     var remindersEnabled: Bool? = nil
     var reminderHour: Int? = nil
     var remindersEnabledAt: Date? = nil
