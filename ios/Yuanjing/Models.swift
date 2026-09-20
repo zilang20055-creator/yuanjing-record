@@ -52,6 +52,7 @@ struct Snapshot: Codable {
     var remindersEnabledAt: Date? = nil
     var payday = 10
     var lastAccount: UUID? = nil
+    var incomeCategories: [String]? = nil
     var categories = ["食物", "购物", "交通", "饮品", "电子消费", "模玩", "日用", "通讯", "运动", "娱乐", "游戏", "社交", "数码", "住房", "宠物", "旅行", "服饰", "理发", "其他", "医疗"]
     var tags: [String: [String]] = [:]
     var bowelDefaults = Dictionary(uniqueKeysWithValues: bowelOptions.map { ($0.0, $0.1[0]) })
@@ -253,5 +254,13 @@ enum FinanceAnalysis {
             cursor = calendar.date(byAdding: component, value: 1, to: cursor)!
         }
         return result
+    }
+}
+
+let defaultIncomeCategories = ["二手", "工资", "奖金", "红包", "礼金", "副业", "中奖", "投资", "股票", "租金", "其他收入"]
+extension Snapshot {
+    func entryCategories(_ kind: String) -> [String] {
+        guard kind == "收入" else { return categories }
+        return incomeCategories ?? defaultIncomeCategories + Array(Set(entries.filter { $0.kind == "收入" }.map(\.category))).sorted().filter { !defaultIncomeCategories.contains($0) }
     }
 }

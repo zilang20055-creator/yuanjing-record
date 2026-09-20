@@ -18,10 +18,6 @@ struct BowelHome: View {
                     else { Text("从今天开始好好记录") }
                 }; Spacer(); CatIcon(index: 24, size: 95)
             }.frame(maxWidth: .infinity, alignment: .leading).card(honey.opacity(0.35))
-            Button {
-                if store.state.runningSince == nil { store.change { $0.runningSince = Date() } }
-                else { edit = true }
-            } label: { Text(store.state.runningSince == nil ? "开始便便" : "结束并记录").bold().frame(maxWidth: .infinity).card(honey) }.buttonStyle(GentleButtonStyle())
             if store.state.runningSince != nil { Button("没拉出来，结束计时", role: .destructive) { cancel = true }.font(.caption); Text("可以切去其他应用，回来继续。\n计时起点已保存在手机。 ").font(.caption).foregroundStyle(.secondary) }
             BowelCalendar(day: $day, dates: store.state.bowels.map(\.start)).card()
             HStack { Text(day.formatted(.dateTime.month().day())).bold(); Spacer(); Button("补记") { edit = true } }
@@ -44,6 +40,12 @@ struct BowelHome: View {
                 ScrollView(.horizontal) { HStack { ForEach(dates, id: \.self) { date in Button(date.formatted(.dateTime.month().day())) { day = date }.padding(10).background(honey.opacity(0.35), in: Capsule()) } } }
             }
         }.listStyle(.plain).scrollContentBackground(.hidden).background(cream).navigationBarHidden(true)
+            .safeAreaInset(edge: .bottom) {
+                HStack { Spacer(); Button {
+                    if store.state.runningSince == nil { store.change { $0.runningSince = Date() } } else { edit = true }
+                } label: { Text(store.state.runningSince == nil ? "开始便便" : "结束并记录").bold().padding(.horizontal, 24).frame(height: 50).background(honey, in: RoundedRectangle(cornerRadius: 17)).overlay(RoundedRectangle(cornerRadius: 17).stroke(ink, lineWidth: 2)) }
+                }.padding(.horizontal, 16).padding(.vertical, 8).background(cream)
+            }
             .sheet(item: $modifying) { entry in NavigationStack { BowelForm(initialStart: entry.start, timed: false, existing: entry) } }
             .alert("删除这次排便记录？", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), presenting: deleting) { entry in
                 Button("取消", role: .cancel) { deleting = nil }
@@ -70,7 +72,7 @@ struct BowelForm: View {
     @State private var noResult = false
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 10) {
                 VStack(spacing: 10) {
                     DatePicker("开始", selection: $start, displayedComponents: [.date, .hourAndMinute])
                     DatePicker("结束", selection: $end, displayedComponents: [.date, .hourAndMinute])
@@ -93,7 +95,17 @@ struct BowelForm: View {
             }.padding(16)
         }.background(cream).foregroundStyle(ink).navigationTitle(existing == nil ? "结束记录" : "修改记录").toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("返回") { dismiss() } }
-            ToolbarItem(placement: .confirmationAction) { Button("保存") {
+
+        }.safeAreaInset(edge: .bottom) {
+            HStack { Spacer(); Button("保存") { save() }.bold().padding(.horizontal, 32).frame(height: 50).background(honey, in: RoundedRectangle(cornerRadius: 17)).overlay(RoundedRectangle(cornerRadius: 17).stroke(ink, lineWidth: 2)).accessibilityIdentifier("save-bowel") }.padding(.horizontal, 16).padding(.vertical, 8).background(cream)
+        }.alert("这次没拉出来？", isPresented: $noResult) {
+            Button("继续记录", role: .cancel) {}
+            Button("结束计时", role: .destructive) { if store.change({ $0.runningSince = nil }) { dismiss() } }
+        } message: { Text("结束本次计时，不新增排便记录，也不改变距上次排便的时间。") }
+        .onAppear { start = existing?.start ?? initialStart; end = existing?.end ?? (timed ? Date() : initialStart); selections = existing?.selections ?? store.state.bowelDefaults; note = existing?.note ?? "" }
+    }
+    private func save() {
+
                 guard end >= start, end <= Date().addingTimeInterval(60) else { store.error = "请检查开始和结束时间"; return }
                 if store.change({ state in
                     if let existing {
@@ -106,12 +118,7 @@ struct BowelForm: View {
                         if timed { state.runningSince = nil }
                     }
                 }) { dismiss() }
-            } }
-        }.alert("这次没拉出来？", isPresented: $noResult) {
-            Button("继续记录", role: .cancel) {}
-            Button("结束计时", role: .destructive) { if store.change({ $0.runningSince = nil }) { dismiss() } }
-        } message: { Text("结束本次计时，不新增排便记录，也不改变距上次排便的时间。") }
-        .onAppear { start = existing?.start ?? initialStart; end = existing?.end ?? (timed ? Date() : initialStart); selections = existing?.selections ?? store.state.bowelDefaults; note = existing?.note ?? "" }
+
     }
 }
 
@@ -121,7 +128,7 @@ struct BowelOptionRow: View {
     @Binding var selection: String
     let realistic: Bool
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(field).font(.headline)
                 Spacer()
@@ -137,13 +144,16 @@ struct BowelOptionRow: View {
     private func choice(index: Int, option: String) -> some View {
         let selected = selection == option
         return Button { selection = option } label: {
-            VStack(spacing: 5) {
-                BowelOptionIcon(field: field, index: index, realistic: realistic).frame(height: 36)
-                Text(option).font(.system(size: 11, weight: selected ? .bold : .regular))
-                    .lineLimit(2).minimumScaleFactor(0.75).frame(height: 28)
-                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 10)).opacity(selected ? 1 : 0.25)
-            }.frame(maxWidth: .infinity).padding(.vertical, 9)
+            Group {
+                if ["厕纸血迹", "沾马桶"].contains(field) {
+                    HStack(spacing: 6) { Image(systemName: selected ? "checkmark.circle.fill" : "circle").font(.caption); Text(option).font(.subheadline) }.frame(height: 36)
+                } else {
+                    VStack(spacing: 2) {
+                        BowelOptionIcon(field: field, index: index, realistic: realistic).frame(height: 24)
+                        Text(option).font(.system(size: 10, weight: selected ? .bold : .regular)).lineLimit(1).minimumScaleFactor(0.7).frame(height: 16)
+                    }.frame(height: 44)
+                }
+            }.frame(maxWidth: .infinity).padding(.vertical, 4)
                 .background(selected ? honey.opacity(0.6) : .white, in: RoundedRectangle(cornerRadius: 12))
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(selected ? ink : ink.opacity(0.1), lineWidth: selected ? 2 : 1))
         }.buttonStyle(GentleButtonStyle())
@@ -190,7 +200,7 @@ struct BowelOptionIcon: View {
             } else if field == "颜色" {
                 Circle().fill(colors[index]).overlay(Circle().stroke(ink.opacity(0.25), lineWidth: 1)).padding(4)
             } else {
-                Image(systemName: symbol).font(.system(size: 25, weight: realistic ? .regular : .bold))
+                Image(systemName: symbol).font(.system(size: 20, weight: realistic ? .regular : .bold))
                     .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(field == "厕纸血迹" && index == 1 ? Color.red : ink)
             }

@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import AudioToolbox
 
 struct GentleButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
@@ -40,6 +41,17 @@ struct CatIcon: View {
     var body: some View {
         Image(uiImage: Atlas.tiles[min(max(index, 0), 24)]).resizable()
             .frame(width: size, height: size).blendMode(.multiply).accessibilityHidden(true)
+    }
+}
+struct CategoryGlyph: View {
+    let category: String
+    let kind: String
+    var size: CGFloat = 38
+    private let symbols = ["二手": "arrow.triangle.2.circlepath", "工资": "banknote", "奖金": "trophy", "红包": "envelope", "礼金": "gift", "副业": "laptopcomputer", "中奖": "star.circle", "投资": "chart.line.uptrend.xyaxis", "股票": "chart.bar", "租金": "house"]
+    var body: some View {
+        if kind == "收入" {
+            Image(systemName: symbols[category] ?? "banknote").font(.system(size: size * 0.65, weight: .medium)).foregroundStyle(ink, honey).frame(width: size, height: size).accessibilityHidden(true)
+        } else { CatIcon(index: categoryArt.firstIndex(of: category) ?? 18, size: size) }
     }
 }
 @main struct YuanjingApp: App {
@@ -101,9 +113,17 @@ struct HomeView: View {
                 Text("最近记录").font(.title3.bold())
                 if store.state.entries.isEmpty { Text("先在「账户与余额」填好各项余额，\n再记下今天的第一笔吧。").foregroundStyle(.secondary).padding(.vertical, 24) }
             }.listRowSeparator(.hidden).listRowBackground(cream)
-            ForEach(store.state.entries.sorted { $0.date > $1.date }) { entry in
-                FinanceRecordRow(entry: entry)
-                    .listRowBackground(cream)
+            let days = Dictionary(grouping: store.state.entries) { Calendar.current.startOfDay(for: $0.date) }
+            ForEach(days.keys.sorted(by: >), id: \.self) { day in
+                let records = days[day] ?? []
+                Section {
+                    ForEach(records.sorted { $0.date > $1.date }) { entry in FinanceRecordRow(entry: entry).listRowBackground(cream) }
+                } header: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(day.formatted(.dateTime.month().day().weekday())).font(.subheadline.bold())
+                        Text("收入 ¥" + Ledger.money(records.filter { $0.kind == "收入" }.reduce(0) { $0 + $1.amount }) + "  ·  净支出 ¥" + Ledger.money(records.filter { ["支出", "退款", "分摊回款"].contains($0.kind) }.reduce(0) { $0 + FinanceAnalysis.signed($1) })).font(.caption)
+                    }.foregroundStyle(ink).textCase(nil).accessibilityIdentifier("daily-summary")
+                }
             }
         }.listStyle(.plain).scrollContentBackground(.hidden).background(cream)
             .toolbar(.hidden, for: .navigationBar).foregroundStyle(ink)
@@ -143,10 +163,43 @@ struct EntryRow: View {
     let entry: Entry
     var body: some View {
         HStack(spacing: 12) {
-            CatIcon(index: categoryArt.firstIndex(of: entry.category) ?? 20, size: 38)
+            CategoryGlyph(category: entry.category, kind: entry.kind)
             VStack(alignment: .leading, spacing: 4) { Text(entry.tag.isEmpty ? entry.category : entry.tag).bold(); Text("\(entry.date.formatted(.dateTime.month().day())) · \(store.accountName(entry.account)) · \(entry.kind)").font(.caption).foregroundStyle(.secondary) }
             Spacer(); Text((entry.kind == "支出" ? "−" : entry.kind == "转账" ? "" : "+") + Ledger.money(entry.amount)).monospacedDigit()
         }.padding(.vertical, 8)
+    }
+}
+// Keep the UIKit input alive while Chinese marked text is being composed.
+struct TagInput: UIViewRepresentable {
+    @Binding var text: String
+    @Binding var editing: Bool
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+    func makeUIView(context: Context) -> UITextField {
+        let field = UITextField()
+        field.placeholder = "填写标签"; field.font = .preferredFont(forTextStyle: .body)
+        field.returnKeyType = .done; field.delegate = context.coordinator
+        field.accessibilityIdentifier = "entry-tag"
+        field.addTarget(context.coordinator, action: #selector(Coordinator.changed(_:)), for: .editingChanged)
+        let bar = UIToolbar(); bar.sizeToFit()
+        bar.items = [UIBarButtonItem(systemItem: .flexibleSpace), UIBarButtonItem(title: "标签完成", style: .done, target: context.coordinator, action: #selector(Coordinator.finish))]
+        field.inputAccessoryView = bar; context.coordinator.field = field
+        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return field
+    }
+    func updateUIView(_ field: UITextField, context: Context) {
+        context.coordinator.parent = self
+        if !field.isFirstResponder && field.markedTextRange == nil && field.text != text { field.text = text }
+        if !editing && field.isFirstResponder { field.resignFirstResponder() }
+    }
+    class Coordinator: NSObject, UITextFieldDelegate {
+        var parent: TagInput
+        weak var field: UITextField?
+        init(_ parent: TagInput) { self.parent = parent }
+        @objc func changed(_ field: UITextField) { if field.markedTextRange == nil { parent.text = field.text ?? "" } }
+        func textFieldDidBeginEditing(_ field: UITextField) { parent.editing = true }
+        func textFieldDidEndEditing(_ field: UITextField) { parent.text = field.text ?? ""; parent.editing = false }
+        func textFieldShouldReturn(_ field: UITextField) -> Bool { field.resignFirstResponder(); return true }
+        @objc func finish() { field?.resignFirstResponder() }
     }
 }
 struct EntryForm: View {
@@ -154,6 +207,9 @@ struct EntryForm: View {
     @Environment(\.dismiss) var dismiss
     var parent: Entry? = nil
     var copying: Entry? = nil
+    var editing: Entry? = nil
+    @State private var loaded = false
+    @State private var saving = false
     @State var kind = "支出"
     @State private var category = "食物"
     @State private var tag = ""
@@ -161,7 +217,7 @@ struct EntryForm: View {
     @State private var account: UUID? = nil
     @State private var destination: UUID? = nil
     @State private var date = Date()
-    @FocusState private var tagFocused: Bool
+    @State private var tagFocused = false
     @State private var tagsShown = false
     @State private var newTag = ""
     @State private var tagsSnapshot: [String] = []
@@ -169,15 +225,15 @@ struct EntryForm: View {
     @State private var operation: String? = nil
     var body: some View {
         VStack(spacing: 10) {
-            if parent == nil { Picker("类型", selection: $kind) { ForEach(["支出", "收入", "转账"], id: \.self) { Text($0) } }.pickerStyle(.segmented) }
+            if parent == nil && editing == nil { Picker("类型", selection: $kind) { ForEach(["支出", "收入", "转账"], id: \.self) { Text($0) } }.pickerStyle(.segmented) }
             if kind != "转账" && parent == nil {
                 ScrollView {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 5), count: 5), spacing: 10) {
-                        ForEach(Array(store.state.categories.enumerated()), id: \.element) { index, item in
+                        ForEach(Array(store.state.entryCategories(kind).enumerated()), id: \.element) { index, item in
                             Button {
                                 tagFocused = false; category = item; tag = ""; tagsSnapshot = store.sortedTags(item); tagsShown = true
                             } label: {
-                                VStack(spacing: 3) { CatIcon(index: categoryArt.firstIndex(of: item) ?? 18, size: 38); Text(item).font(.system(size: 12, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.7) }
+                                VStack(spacing: 3) { CategoryGlyph(category: item, kind: kind); Text(item).font(.system(size: 12, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.7) }
                                     .frame(maxWidth: .infinity).padding(.vertical, 7).background(category == item ? honey.opacity(0.55) : .clear, in: RoundedRectangle(cornerRadius: 16))
                             }.buttonStyle(GentleButtonStyle()).accessibilityIdentifier("category-" + item)
                         }
@@ -205,41 +261,48 @@ struct EntryForm: View {
             }
             HStack {
                 if kind != "转账" && parent == nil {
-                    TextField("填写标签", text: $tag)
-                        .focused($tagFocused).submitLabel(.done)
-                        .onSubmit { tagFocused = false }
-                        .accessibilityIdentifier("entry-tag")
+                    TagInput(text: $tag, editing: $tagFocused).frame(height: 36)
+
                 } else { Text(kind == "转账" ? "转账" : tag.isEmpty ? category : tag).font(.subheadline) }
                 Spacer(); Text("¥ " + (amount.isEmpty ? "0" : amount)).font(.system(size: 29, weight: .bold, design: .rounded)).lineLimit(1).minimumScaleFactor(0.5)
             }.card(honey.opacity(0.22))
             if let operand, let operation { Text("\(Ledger.money(operand)) \(operation)").font(.caption).frame(maxWidth: .infinity, alignment: .trailing) }
-            if !tagFocused {
+            if parent != nil && kind == "退款" {
+                Button("整单退款（剩余可退金额）") {
+                    if let parent { amount = Ledger.money(max(0, parent.amount - store.state.entries.filter { $0.parent == parent.id && $0.id != editing?.id }.reduce(0) { $0 + $1.amount })); operand = nil; operation = nil }
+                }.font(.subheadline).accessibilityIdentifier("refund-all")
+            }
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
                 ForEach(["7", "8", "9", "⌫", "4", "5", "6", "+", "1", "2", "3", "−", ".", "0", "=", "完成"], id: \.self) { key in
                     Button { press(key) } label: { Text(key).font(.system(size: key == "完成" ? 19 : 26, weight: .semibold, design: .rounded)).frame(maxWidth: .infinity).frame(height: 47).background(key == "完成" ? honey : .white, in: RoundedRectangle(cornerRadius: 17)).overlay(RoundedRectangle(cornerRadius: 17).stroke(ink, lineWidth: 2)) }.buttonStyle(GentleButtonStyle()).accessibilityIdentifier("key-" + key)
                 }
             }
-            } else {
-                Button("标签填好了，输入金额") { tagFocused = false }
-                    .frame(maxWidth: .infinity).padding(12).background(honey, in: Capsule())
-            }
-        }.padding(16).background(cream).foregroundStyle(ink).navigationTitle(parent == nil ? "记一笔" : kind).navigationBarTitleDisplayMode(.inline)
+
+        }.padding(16).background(cream).foregroundStyle(ink).navigationTitle(editing != nil ? "修改账单" : parent == nil ? "记一笔" : kind).navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } } }
+            .onChange(of: kind) { _, value in if parent == nil && editing == nil { category = store.state.entryCategories(value).first ?? "其他"; tag = "" } }
             .onAppear {
+                guard !loaded else { return }; loaded = true
+                UIImpactFeedbackGenerator(style: .light).impactOccurred(intensity: 0.65)
                 account = store.state.lastAccount ?? store.state.accounts.first?.id
                 if let parent { category = parent.category; tag = parent.tag }
+                if let editing { kind = editing.kind; account = editing.account; destination = editing.destination; date = editing.date; category = editing.category; tag = editing.tag; amount = Ledger.money(editing.amount) }
                 if let copying { account = copying.account; destination = copying.destination; category = copying.category; tag = copying.tag; amount = Ledger.money(copying.amount) }
             }
             .sheet(isPresented: $tagsShown) {
                 NavigationStack {
                     VStack(alignment: .leading, spacing: 16) {
-                        HStack { TextField("添加小标签", text: $newTag).textFieldStyle(.roundedBorder); Button("选择") { let clean = newTag.trimmingCharacters(in: .whitespacesAndNewlines); if !clean.isEmpty { tag = clean; newTag = ""; tagsShown = false } } }
+                        TextField("添加小标签", text: $newTag).textFieldStyle(.roundedBorder).submitLabel(.done).onSubmit { selectNewTag() }
                         ScrollView { LazyVGrid(columns: [GridItem(.adaptive(minimum: 85))], spacing: 10) { ForEach(tagsSnapshot, id: \.self) { item in Button { tag = item; tagsShown = false } label: { Text(item).font(.subheadline).frame(maxWidth: .infinity).padding(12).background(honey.opacity(0.35), in: Capsule()) } } } }
                         Button("本次只记大类") { tag = ""; tagsShown = false }
-                    }.padding().background(cream).navigationTitle(category + " · 全部标签").navigationBarTitleDisplayMode(.inline)
+                    }.padding().background(cream).safeAreaInset(edge: .bottom) { HStack { Spacer(); Button("选择") { selectNewTag() }.bold().padding(.horizontal, 28).frame(height: 48).background(honey, in: RoundedRectangle(cornerRadius: 17)) }.padding(16).background(cream) }.navigationTitle(category + " · 全部标签").navigationBarTitleDisplayMode(.inline)
                     .toolbar { ToolbarItem(placement: .confirmationAction) { Button("关闭") { tagsShown = false }.accessibilityLabel("关闭标签选择") } }
                 }.buttonStyle(GentleButtonStyle()).presentationDetents([.height(320), .medium])
             }
+    }
+    private func selectNewTag() {
+        let clean = newTag.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !clean.isEmpty { tag = clean; newTag = ""; tagsShown = false }
     }
     private func transferAccountRow(_ title: String, selection: Binding<UUID?>, identifier: String) -> some View {
         Menu {
@@ -265,6 +328,8 @@ struct EntryForm: View {
         return operation == "+" ? left + right : left - right
     }
     private func press(_ key: String) {
+        guard !saving else { return }
+        if "0123456789.⌫".contains(key) { AudioServicesPlaySystemSound(1104) }
         if key == "⌫" { if !amount.isEmpty { amount.removeLast() }; return }
         if ["+", "−", "="].contains(key) {
             guard let result = evaluated(), abs(result) <= 999_999_999_999 else { store.error = "请先输入有效金额"; return }
@@ -273,7 +338,14 @@ struct EntryForm: View {
         }
         if key == "完成" {
             guard let value = evaluated(), value > 0, let account else { store.error = "请输入大于 0 的金额"; return }
-            if store.add(Entry(date: date, kind: kind, amount: value, account: account, destination: destination, category: category, tag: tag.trimmingCharacters(in: .whitespacesAndNewlines), note: copying?.note ?? "", parent: parent?.id)) { dismiss() }; return
+            saving = true
+            let cleanTag = tag.trimmingCharacters(in: .whitespacesAndNewlines)
+            let saved: Bool
+            if var edited = editing {
+                edited.amount = value; edited.account = account; edited.destination = destination; edited.date = date; edited.category = category; edited.tag = cleanTag
+                saved = store.change { try Ledger.replace(edited, in: &$0) }
+            } else { saved = store.add(Entry(date: date, kind: kind, amount: value, account: account, destination: destination, category: category, tag: cleanTag, note: copying?.note ?? "", parent: parent?.id)) }
+            if saved { dismiss() } else { saving = false }; return
         }
         if key == "." { if !amount.contains(".") { amount = amount.isEmpty ? "0." : amount + "." }; return }
         if let decimal = amount.firstIndex(of: "."), amount.distance(from: decimal, to: amount.endIndex) > 2 { return }
@@ -501,8 +573,34 @@ struct QuickEntryGuide: View {
 }
 struct CategorySettings: View {
     @EnvironmentObject var store: Store
+    @State private var kind = "支出"
+    @State private var name = ""
     var body: some View {
-        List { ForEach(store.state.categories, id: \.self) { Text($0) }.onMove { source, destination in store.change { $0.categories.move(fromOffsets: source, toOffset: destination) } } }.environment(\.editMode, .constant(.active)).navigationTitle("调整大类顺序")
+        List {
+            Picker("分类类型", selection: $kind) { Text("支出").tag("支出"); Text("收入").tag("收入") }.pickerStyle(.segmented)
+            HStack {
+                TextField("新增大类", text: $name)
+                Button("添加") {
+                    let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !clean.isEmpty else { return }
+                    store.change { state in
+                        var list = state.entryCategories(kind)
+                        if !list.contains(clean) { list.append(clean) }
+                        if kind == "收入" { state.incomeCategories = list } else { state.categories = list }
+                    }; name = ""
+                }
+            }
+            Section("拖动排序 · 移除入口不会删除历史账单") {
+                ForEach(store.state.entryCategories(kind), id: \.self) { Text($0) }
+                    .onMove { source, destination in update { $0.move(fromOffsets: source, toOffset: destination) } }
+                    .onDelete { offsets in update { $0.remove(atOffsets: offsets) } }
+            }
+        }.environment(\.editMode, .constant(.active)).navigationTitle("收入与支出分类")
+    }
+    private func update(_ edit: (inout [String]) -> Void) {
+        var list = store.state.entryCategories(kind); edit(&list)
+        guard !list.isEmpty else { store.error = "至少保留一个大类"; return }
+        store.change { if kind == "收入" { $0.incomeCategories = list } else { $0.categories = list } }
     }
 }
 
@@ -598,40 +696,9 @@ struct DataTransferView: View {
 
 struct EntryEditor: View {
     @EnvironmentObject var store: Store
-    @Environment(\.dismiss) var dismiss
     let entry: Entry
-    @State private var amount = ""
-    @State private var date = Date()
-    @State private var account: UUID? = nil
-    @State private var destination: UUID? = nil
-    @State private var category = ""
-    @State private var tag = ""
-    @State private var error: String? = nil
     var body: some View {
-        NavigationStack { Form {
-            Text(entry.kind)
-            TextField("金额", text: $amount).keyboardType(.decimalPad)
-            DatePicker("日期", selection: $date)
-            Picker("账户", selection: $account) { ForEach(store.state.accounts) { Text($0.name).tag(Optional($0.id)) } }
-            if entry.kind == "转账" { Picker("转入账户", selection: $destination) { ForEach(store.state.accounts) { Text($0.name).tag(Optional($0.id)) } } }
-            if entry.parent == nil && entry.kind != "转账" {
-                Picker("大类", selection: $category) { ForEach(store.state.categories, id: \.self) { Text($0) } }
-                TextField("小标签", text: $tag)
-            }
-            Text("历史导入记录只修正统计，不改变余额。已经校准过余额的账户，校准前的记录修改也不会再次扣款。").font(.caption)
-            if let error { Text(error).foregroundStyle(.red) }
-        }.navigationTitle("编辑记录").toolbar {
-            ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
-            ToolbarItem(placement: .confirmationAction) { Button("保存") {
-                guard let number = Ledger.cents(amount), number > 0, let account else { error = "请填写有效金额和账户"; return }
-                var edited = entry
-                edited.amount = number; edited.date = date; edited.account = account; edited.destination = destination
-                edited.category = category; edited.tag = tag.trimmingCharacters(in: .whitespacesAndNewlines)
-                var preview = store.state
-                do { try Ledger.replace(edited, in: &preview) } catch { self.error = error.localizedDescription; return }
-                if store.change({ try Ledger.replace(edited, in: &$0) }) { dismiss() }
-            } }
-        }.onAppear { amount = Ledger.money(entry.amount); date = entry.date; account = entry.account; destination = entry.destination; category = entry.category; tag = entry.tag } }
+        NavigationStack { EntryForm(parent: entry.parent.flatMap { id in store.state.entries.first { $0.id == id } }, editing: entry, kind: entry.kind) }
     }
 }
 

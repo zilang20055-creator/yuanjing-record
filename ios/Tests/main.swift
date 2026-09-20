@@ -216,3 +216,11 @@ let months = FinanceAnalysis.points(selectedExpenses, range: year, now: date("20
 expect(months.count == 9 && months.last?.amount == -3000, "year trend uses monthly buckets")
 expect(FinanceAnalysis.groups([septemberIncome], all: analyticsEntries, tags: true).first?.id.tag == "", "untagged entries remain in totals")
 print("PASS: \(checks) including analysis checks")
+
+var categoriesState = Snapshot()
+expect(categoriesState.entryCategories("收入").contains("二手") && !categoriesState.entryCategories("收入").contains("食物"), "income categories have their own defaults")
+categoriesState.incomeCategories = ["工资", "自定义收入"]
+expect(categoriesState.entryCategories("收入") == ["工资", "自定义收入"] && categoriesState.entryCategories("支出").contains("食物"), "editing income categories leaves expense categories alone")
+let categoriesRoundtrip = try Backup.decode(JSONEncoder().encode(categoriesState))
+expect(categoriesRoundtrip.incomeCategories == categoriesState.incomeCategories, "income category settings persist")
+print("PASS: \(checks) including separate income categories")

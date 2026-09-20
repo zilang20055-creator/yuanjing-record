@@ -1,5 +1,43 @@
 import XCTest
 final class SmokeTests: XCTestCase {
+    func testThumbFlowIncomeAndFullRefund() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--test-store", UUID().uuidString]
+        app.launch()
+        app.buttons["new-entry"].tap()
+        app.segmentedControls.buttons["收入"].tap()
+        XCTAssertTrue(app.buttons["category-二手"].exists)
+        XCTAssertTrue(app.buttons["category-工资"].exists)
+        XCTAssertFalse(app.buttons["category-食物"].exists)
+        app.segmentedControls.buttons["支出"].tap()
+        let input = app.textFields["entry-tag"]
+        input.tap(); input.typeText("tao")
+        XCTAssertEqual(input.value as? String, "tao")
+        app.buttons["标签完成"].tap()
+        app.buttons["key-1"].tap(); app.buttons["key-0"].tap(); app.buttons["key-完成"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["daily-summary"].firstMatch.exists)
+        let row = app.descendants(matching: .any)["finance-row-tao"].firstMatch
+        row.swipeLeft(); app.buttons["退款"].tap()
+        app.buttons["refund-all"].tap()
+        XCTAssertTrue(app.staticTexts["¥ 10.00"].exists)
+        app.buttons["key-完成"].tap()
+        XCTAssertTrue(app.staticTexts["+10.00"].exists)
+        app.tabBars.buttons["便便"].tap()
+        let start = app.buttons["开始便便"]
+        XCTAssertGreaterThan(start.frame.midX, app.frame.midX)
+        start.tap(); app.buttons["结束并记录"].tap()
+        let save = app.buttons["save-bowel"]
+        XCTAssertGreaterThan(save.frame.midX, app.frame.midX)
+        XCTAssertGreaterThan(save.frame.maxY, app.frame.height * 0.7)
+        app.swipeUp()
+        let blood = app.buttons["bowel-厕纸血迹-没有"]
+        XCTAssertTrue(blood.exists)
+        XCTAssertLessThanOrEqual(blood.frame.height, 48)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Compact bowel and bottom save"; shot.lifetime = .keepAlways; add(shot)
+        save.tap()
+    }
+
     func testAnalysisAndSettingsGrid() throws {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -7,7 +45,7 @@ final class SmokeTests: XCTestCase {
         app.launch()
         app.buttons["new-entry"].tap()
         app.textFields["entry-tag"].tap(); app.textFields["entry-tag"].typeText("寿司郎")
-        app.buttons["标签填好了，输入金额"].tap()
+        app.buttons["标签完成"].tap()
         app.buttons["key-1"].tap(); app.buttons["key-0"].tap(); app.buttons["key-0"].tap()
         app.buttons["key-完成"].tap()
         app.tabBars.buttons["设置"].tap()
@@ -84,7 +122,7 @@ final class SmokeTests: XCTestCase {
         app.buttons["new-entry"].tap()
         app.textFields["entry-tag"].tap()
         app.textFields["entry-tag"].typeText("左滑测试")
-        app.buttons["标签填好了，输入金额"].tap()
+        app.buttons["标签完成"].tap()
         app.buttons["key-1"].tap(); app.buttons["key-0"].tap()
         app.buttons["key-完成"].tap()
         let row = app.descendants(matching: .any).matching(identifier: "finance-row-左滑测试").firstMatch
@@ -100,20 +138,20 @@ final class SmokeTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["+1.00"].waitForExistence(timeout: 5))
         let original = app.cells.containing(.staticText, identifier: "−10.00").firstMatch
         original.swipeLeft(); app.buttons["修改"].tap()
-        XCTAssertTrue(app.textFields["小标签"].waitForExistence(timeout: 5))
-        app.navigationBars.buttons["保存"].tap()
+        XCTAssertTrue(app.textFields["entry-tag"].waitForExistence(timeout: 5))
+        app.buttons["key-完成"].tap()
         original.swipeLeft(); app.buttons["删除"].tap()
         app.alerts.buttons["删除记录"].tap()
         XCTAssertFalse(app.staticTexts["−10.00"].exists)
         XCTAssertFalse(app.staticTexts["+1.00"].exists)
         app.tabBars.buttons["便便"].tap()
         app.buttons["开始便便"].tap(); app.buttons["结束并记录"].tap()
-        app.navigationBars.buttons["保存"].tap()
+        app.buttons["save-bowel"].tap()
         let bowel = app.buttons["bowel-record-row"].firstMatch
         if !bowel.isHittable { app.swipeUp() }
         bowel.swipeLeft(); app.buttons["修改"].tap()
         app.buttons["bowel-形态-颗粒状"].tap()
-        app.navigationBars.buttons["保存"].tap()
+        app.buttons["save-bowel"].tap()
         if !bowel.isHittable { app.swipeUp() }
         XCTAssertTrue(app.staticTexts["颗粒状 · 咖啡色"].exists)
         bowel.swipeLeft(); app.buttons["删除"].tap()
@@ -190,7 +228,7 @@ final class SmokeTests: XCTestCase {
         app.buttons["本次只记大类"].tap()
         let tag = app.textFields["entry-tag"]
         tag.tap(); tag.typeText("测试餐厅")
-        app.buttons["标签填好了，输入金额"].tap()
+        app.buttons["标签完成"].tap()
         XCTAssertFalse(app.textFields["备注（可选）"].exists)
         app.buttons["choose-tag"].tap()
         XCTAssertTrue(app.textFields["添加小标签"].waitForExistence(timeout: 5))
@@ -208,7 +246,7 @@ final class SmokeTests: XCTestCase {
         app.tabBars.buttons["便便"].tap()
         XCTAssertTrue(app.buttons["结束并记录"].waitForExistence(timeout: 5))
         app.buttons["结束并记录"].tap()
-        app.navigationBars.buttons["保存"].tap()
+        app.buttons["save-bowel"].tap()
         XCTAssertTrue(app.buttons["开始便便"].waitForExistence(timeout: 5))
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.lifetime = .keepAlways
